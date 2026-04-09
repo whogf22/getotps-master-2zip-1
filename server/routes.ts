@@ -318,7 +318,7 @@ export async function registerRoutes(
       const activation = pnResult.activation || pnResult;
       const proxnumId = String(activation.activation_id || activation.id || "");
       const phoneNumber = activation.phone || activation.number || "";
-      const amountPaid = activation.amount_paid ? String(activation.amount_paid) : null;
+      const amountPaid = activation.amount_paid != null ? Number(activation.amount_paid) : null;
 
       if (!phoneNumber) {
         return res.status(503).json({ message: "No numbers available right now. Try again shortly." });
@@ -339,7 +339,7 @@ export async function registerRoutes(
         phoneNumber: formattedPhone,
         status: "pending",
         otpCode: null,
-        smsMessages: amountPaid ? JSON.stringify({ proxnum_cost: amountPaid }) : null,
+        smsMessages: null,
         price: service.price,
         country: resolvedCountry,
         proxnumId,
@@ -348,11 +348,12 @@ export async function registerRoutes(
         completedAt: null,
       });
 
+      const costNote = amountPaid != null ? ` (provider cost: $${amountPaid.toFixed(6)})` : "";
       await storage.createTransaction({
         userId: user.id,
         type: "purchase",
         amount: `-${service.price}`,
-        description: `${service.name} OTP number`,
+        description: `${service.name} OTP number${costNote}`,
         orderId: order.id,
         stripeSessionId: null,
         createdAt: now.toISOString(),
@@ -931,7 +932,7 @@ export async function registerRoutes(
       const activation = pnResult.activation || pnResult;
       const proxnumId = String(activation.activation_id || activation.id || "");
       const phoneNumber = activation.phone || activation.number || "";
-      const amountPaid = activation.amount_paid ? String(activation.amount_paid) : null;
+      const amountPaid = activation.amount_paid != null ? Number(activation.amount_paid) : null;
       if (!phoneNumber) {
         return res.status(503).json({ error: "No numbers available" });
       }
@@ -946,14 +947,15 @@ export async function registerRoutes(
       const order = await storage.createOrder({
         userId: user.id, serviceId: svc.id, serviceName: svc.name,
         phoneNumber: formattedPhone, status: "pending", otpCode: null,
-        smsMessages: amountPaid ? JSON.stringify({ proxnum_cost: amountPaid }) : null,
+        smsMessages: null,
         price: svc.price, country: resolvedCountry, proxnumId,
         createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
       });
 
+      const costNote = amountPaid != null ? ` (provider cost: $${amountPaid.toFixed(6)})` : "";
       await storage.createTransaction({
         userId: user.id, type: "purchase", amount: `-${svc.price}`,
-        description: `${svc.name} OTP number`, orderId: order.id,
+        description: `${svc.name} OTP number${costNote}`, orderId: order.id,
         stripeSessionId: null, createdAt: now.toISOString(),
       });
 
@@ -1007,7 +1009,7 @@ export async function registerRoutes(
     res.json({
       orderId: order.id, phoneNumber: order.phoneNumber,
       status: order.status, otpCode: order.otpCode,
-      messages: order.smsMessages ? JSON.parse(order.smsMessages).map((m: any) => m.text) : [],
+      messages: order.smsMessages ? (() => { try { const p = JSON.parse(order.smsMessages); return Array.isArray(p) ? p.map((m: any) => m.text) : []; } catch { return []; } })() : [],
       expiresAt: order.expiresAt,
     });
   });
