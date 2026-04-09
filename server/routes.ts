@@ -1,27 +1,20 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, type ProxnumService } from "./proxnum";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcryptjs";
 
-// Extend session type
 declare module "express-session" {
   interface SessionData {
     userId?: number;
   }
 }
 
-// ========== TELLABOT API INTEGRATION ==========
-const TELLABOT_BASE = "https://www.tellabot.com/api_command.php";
-const TELLABOT_USER = process.env.TELLABOT_USER || "siyamhasan4@gmail.com";
-const TELLABOT_KEY = process.env.TELLABOT_API_KEY || "hGwpWflQbP0i0Lz2ls2IkJ8dTDyYMLxt";
-const MARKUP_MULTIPLIER = 1.5; // 50% markup on TellaBot cost
-
-// Service category mapping for popular services
 const SERVICE_CATEGORIES: Record<string, string> = {
-  WhatsApp: "Messaging", Telegram: "Messaging", Discord: "Messaging", Signal: "Messaging",
+  WhatsApp: "Messaging", Whatsapp: "Messaging", Telegram: "Messaging", Discord: "Messaging", Signal: "Messaging",
   Viber: "Messaging", LINE: "Messaging", WeChat: "Messaging", KakaoTalk: "Messaging",
   Google: "Tech", Microsoft: "Tech", Apple: "Tech", AWS: "Tech", GitHub: "Tech", Anthropic: "Tech",
   Facebook: "Social", Instagram: "Social", Twitter: "Social", TikTok: "Social",
@@ -35,57 +28,28 @@ const SERVICE_CATEGORIES: Record<string, string> = {
   Bumble: "Dating", Tinder: "Dating", Hinge: "Dating", Badoo: "Dating",
 };
 
-async function tellabotAPI(cmd: string, params: Record<string, string> = {}): Promise<any> {
-  const url = new URL(TELLABOT_BASE);
-  url.searchParams.set("cmd", cmd);
-  url.searchParams.set("user", TELLABOT_USER);
-  url.searchParams.set("api_key", TELLABOT_KEY);
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, v);
-  }
-  const res = await fetch(url.toString());
-  return res.json();
+async function getMarkupMultiplier(): Promise<number> {
+  const val = await storage.getSetting("price_multiplier");
+  return val ? parseFloat(val) : 1.5;
 }
 
-// Service cache with TTL
-let servicesCache: { data: any[]; updatedAt: number } | null = null;
-const SERVICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-async function fetchTellabotServices(): Promise<any[]> {
-  if (servicesCache && Date.now() - servicesCache.updatedAt < SERVICE_CACHE_TTL) {
-    return servicesCache.data;
-  }
-  try {
-    const result = await tellabotAPI("list_services");
-    if (result.status === "ok" && Array.isArray(result.message)) {
-      servicesCache = { data: result.message, updatedAt: Date.now() };
-      // Sync to DB
-      const dbServices = result.message.map((s: any, i: number) => ({
-        name: s.name,
-        slug: s.name.toLowerCase().replace(/[^a-z0-9]/g, ""),
-        price: (parseFloat(s.price) * MARKUP_MULTIPLIER).toFixed(2),
-        icon: null,
-        category: SERVICE_CATEGORIES[s.name] || "Other",
-        isActive: parseInt(s.otp_available) > 0 ? 1 : 0,
-      }));
-      await storage.upsertServices(dbServices);
-      return result.message;
-    }
-  } catch (err) {
-    console.error("TellaBot service fetch error:", err);
-  }
-  // Fallback to cached DB data
-  return servicesCache?.data || [];
+async function getServiceMultiplier(service: string, country: string): Promise<number> {
+  const val = await storage.getSetting(`multiplier_${service}_${country}`);
+  return val ? parseFloat(val) : 1.0;
 }
 
-// Extract OTP code from SMS text
+async function calculatePrice(basePrice: number, service: string, country: string): Promise<number> {
+  const globalMult = await getMarkupMultiplier();
+  const serviceMult = await getServiceMultiplier(service, country);
+  return basePrice * globalMult * serviceMult;
+}
+
 function extractOTPFromText(text: string): string | null {
-  // Common patterns: 6 digits, 4-8 digit codes
   const patterns = [
-    /\b(\d{6})\b/,  // 6-digit code (most common)
-    /\b(\d{4})\b/,  // 4-digit code
-    /\b(\d{5})\b/,  // 5-digit code
-    /\b(\d{7,8})\b/, // 7-8 digit code
+    /\b(\d{6})\b/,
+    /\b(\d{4})\b/,
+    /\b(\d{5})\b/,
+    /\b(\d{7,8})\b/,
     /code[:\s]+(\d{4,8})/i,
     /pin[:\s]+(\d{4,8})/i,
     /verification[:\s]+(\d{4,8})/i,
@@ -97,7 +61,65 @@ function extractOTPFromText(text: string): string | null {
   return null;
 }
 
-// Crypto wallet addresses
+async function syncProxnumServices(): Promise<void> {
+  try {
+    const apiServices = await getCachedServices();
+
+    let allPrices: Record<string, Record<string, any>> = {};
+    try {
+      allPrices = await getCachedPrices();
+    } catch (e) {
+      console.error("Failed to fetch prices:", e);
+    }
+
+    const servicePriceMap = new Map<string, { basePrice: number; available: number }>();
+    for (const [_countryCode, countryPrices] of Object.entries(allPrices)) {
+      if (typeof countryPrices !== "object" || Array.isArray(countryPrices)) continue;
+      for (const [svcCode, info] of Object.entries(countryPrices as Record<string, any>)) {
+        const existing = servicePriceMap.get(svcCode);
+        const price = info.sell_price || info.base_price || 0;
+        const avail = info.available || 0;
+        if (!existing || price < existing.basePrice) {
+          servicePriceMap.set(svcCode, { basePrice: price, available: (existing?.available || 0) + avail });
+        } else {
+          servicePriceMap.set(svcCode, { ...existing, available: existing.available + avail });
+        }
+      }
+    }
+
+    const globalMult = await getMarkupMultiplier();
+    const dbServices = [];
+    for (const svc of apiServices) {
+      const serviceCode = svc.service || "";
+      const name = svc.name || serviceCode;
+      const slug = serviceCode.toLowerCase();
+      if (!slug) continue;
+
+      const priceInfo = servicePriceMap.get(serviceCode);
+      const basePrice = priceInfo ? priceInfo.basePrice : 0.50;
+      const totalAvailable = priceInfo ? priceInfo.available : 0;
+      const finalPrice = basePrice * globalMult;
+
+      const displayName = name.split(",")[0].trim();
+      dbServices.push({
+        name: displayName,
+        slug,
+        price: finalPrice.toFixed(2),
+        icon: svc.icon || null,
+        category: SERVICE_CATEGORIES[displayName] || "Other",
+        isActive: totalAvailable > 0 ? 1 : 0,
+      });
+    }
+
+    if (dbServices.length > 0) {
+      await storage.upsertServices(dbServices);
+    }
+    console.log(`Synced ${dbServices.length} services from Proxnum (${dbServices.filter(s => s.isActive).length} active)`);
+  } catch (err) {
+    console.error("Proxnum service sync error:", err);
+  }
+}
+
 const CRYPTO_WALLETS: Record<string, string> = {
   BTC: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
   ETH: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -117,7 +139,6 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  // Session setup
   app.use(
     session({
       secret: process.env.SESSION_SECRET || "getotps-secret-key-2024",
@@ -214,47 +235,60 @@ export async function registerRoutes(
     res.json(safeUser);
   });
 
-  // ========== SERVICES (TellaBot-backed) ==========
+  // ========== SERVICES (Proxnum-backed) ==========
 
   app.get("/api/services", async (_req, res) => {
     try {
-      // Fetch fresh from TellaBot (cached 5 min)
-      const tellabotServices = await fetchTellabotServices();
+      await syncProxnumServices();
       const dbServices = await storage.getAllServices();
-      
-      // Merge TellaBot availability with DB services
-      const tellabotMap = new Map(tellabotServices.map((s: any) => [s.name, s]));
-      const enriched = dbServices.map(svc => {
-        const tb = tellabotMap.get(svc.name);
-        return {
-          ...svc,
-          available: tb ? parseInt(tb.otp_available) : 0,
-          costPrice: tb ? tb.price : null,
-        };
-      });
-      res.json(enriched);
+      res.json(dbServices);
     } catch (err) {
-      // Fallback to DB
       const dbServices = await storage.getAllServices();
       res.json(dbServices);
     }
   });
 
-  // ========== ORDERS (TellaBot-backed) ==========
+  app.get("/api/countries", async (_req, res) => {
+    try {
+      const countries = await getCachedCountries();
+      res.json(countries);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/prices", async (req, res) => {
+    try {
+      const { country, service } = req.query;
+      const prices = await getCachedPrices(
+        country as string | undefined,
+        service as string | undefined
+      );
+      res.json(prices);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ========== ORDERS (Proxnum virtual numbers) ==========
 
   app.post("/api/orders", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
-      const { serviceId, serviceName } = req.body;
+      const { serviceId, serviceName, country } = req.body;
+      const orderCountry = country || "us";
+
       if (!serviceId && !serviceName) return res.status(400).json({ message: "serviceId or serviceName required" });
 
-      // Find service from DB
       let service;
       if (serviceId) {
         service = await storage.getService(Number(serviceId));
       }
       if (!service && serviceName) {
         service = await storage.getServiceBySlug(serviceName.toLowerCase().replace(/[^a-z0-9]/g, ""));
+        if (!service) {
+          service = await storage.getServiceByName(serviceName);
+        }
       }
       if (!service) return res.status(404).json({ message: "Service not found" });
 
@@ -265,28 +299,25 @@ export async function registerRoutes(
       const price = parseFloat(service.price);
       if (balance < price) return res.status(400).json({ message: "Insufficient balance" });
 
-      // Request real number from TellaBot
-      const tbResult = await tellabotAPI("request", { service: service.name });
-      
-      if (tbResult.status !== "ok" || !tbResult.message || !Array.isArray(tbResult.message)) {
-        return res.status(503).json({ 
-          message: tbResult.message || "No numbers available for this service. Try again later." 
+      const countries = await getCachedCountries();
+      const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
+
+      const pnResult = await proxnumApi.buyVirtual(service.slug, resolvedCountry);
+
+      if (pnResult.error) {
+        return res.status(503).json({
+          message: pnResult.error.message || "No numbers available for this service. Try again later.",
         });
       }
 
-      const tbData = tbResult.message[0];
-      const tellabotRequestId = tbData.id;
-      const mdn = tbData.mdn;
+      const proxnumId = String(pnResult.id || pnResult.activation_id || "");
+      const phoneNumber = pnResult.number || pnResult.phone || "";
 
-      if (!mdn) {
-        // Priority request — awaiting MDN
+      if (!phoneNumber) {
         return res.status(503).json({ message: "No numbers available right now. Try again shortly." });
       }
 
-      // Format phone number
-      const phoneNumber = mdn.startsWith("+") ? mdn : `+${mdn}`;
-
-      // Deduct balance
+      const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
       const newBalance = (balance - price).toFixed(2);
       await storage.updateUserBalance(user.id, newBalance);
 
@@ -297,13 +328,13 @@ export async function registerRoutes(
         userId: user.id,
         serviceId: service.id,
         serviceName: service.name,
-        phoneNumber,
-        status: "waiting",
+        phoneNumber: formattedPhone,
+        status: "pending",
         otpCode: null,
         smsMessages: null,
         price: service.price,
-        tellabotRequestId,
-        tellabotMdn: mdn,
+        country: resolvedCountry,
+        proxnumId,
         createdAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
         completedAt: null,
@@ -313,7 +344,7 @@ export async function registerRoutes(
         userId: user.id,
         type: "purchase",
         amount: `-${service.price}`,
-        description: `${service.name} number rental`,
+        description: `${service.name} OTP number`,
         orderId: order.id,
         stripeSessionId: null,
         createdAt: now.toISOString(),
@@ -348,69 +379,60 @@ export async function registerRoutes(
     res.json(order);
   });
 
-  // Check for SMS — calls TellaBot read_sms
   app.post("/api/orders/:id/check-sms", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
       const order = await storage.getOrder(Number(req.params.id));
       if (!order) return res.status(404).json({ message: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
-      if (order.status !== "waiting") return res.status(400).json({ message: "Order not in waiting state" });
-
-      if (!order.tellabotRequestId) {
-        return res.status(400).json({ message: "No TellaBot request linked" });
+      if (order.status !== "pending" && order.status !== "waiting") {
+        return res.status(400).json({ message: "Order not in pending state" });
       }
 
-      const tbResult = await tellabotAPI("read_sms", { id: order.tellabotRequestId });
-
-      if (tbResult.status === "error") {
-        // "No messages" is normal — still waiting
-        return res.json({ status: "waiting", messages: [], otpCode: null });
+      if (!order.proxnumId) {
+        return res.status(400).json({ message: "No Proxnum activation linked" });
       }
 
-      if (tbResult.status === "ok" && Array.isArray(tbResult.message)) {
-        const messages = tbResult.message;
-        const smsJson = JSON.stringify(messages);
-        
-        // Try to extract OTP from latest message
-        let otpCode: string | null = null;
-        for (const msg of messages) {
-          const code = extractOTPFromText(msg.text || "");
-          if (code) { otpCode = code; break; }
-        }
+      const pnResult = await proxnumApi.getVirtualStatus(order.proxnumId);
 
-        await storage.updateOrderSms(order.id, smsJson, otpCode || undefined);
+      if (pnResult.error) {
+        return res.json({ status: "pending", messages: [], otpCode: null });
+      }
+
+      const statusData = pnResult.data || pnResult;
+      const code = statusData.code || statusData.msg || statusData.sms_code || null;
+      const fullSms = statusData.full_sms || statusData.sms || statusData.message || "";
+      const apiStatus = statusData.status || "";
+
+      if (code && /^\d{4,8}$/.test(code)) {
+        const messages = [{ timestamp: Date.now().toString(), sender: "service", text: fullSms || `Code: ${code}` }];
+        await storage.updateOrderSms(order.id, JSON.stringify(messages), code);
 
         return res.json({
           status: "received",
           messages,
-          otpCode,
-          fullText: messages.map((m: any) => m.text).join("\n"),
+          otpCode: code,
+          fullText: fullSms || `Code: ${code}`,
         });
       }
 
-      res.json({ status: "waiting", messages: [], otpCode: null });
+      if (fullSms) {
+        const extracted = extractOTPFromText(fullSms);
+        if (extracted) {
+          const messages = [{ timestamp: Date.now().toString(), sender: "service", text: fullSms }];
+          await storage.updateOrderSms(order.id, JSON.stringify(messages), extracted);
+          return res.json({ status: "received", messages, otpCode: extracted, fullText: fullSms });
+        }
+      }
+
+      if (apiStatus === "completed" || apiStatus === "cancelled" || apiStatus === "expired") {
+        await storage.updateOrderStatus(order.id, apiStatus);
+        return res.json({ status: apiStatus, messages: [], otpCode: null });
+      }
+
+      res.json({ status: "pending", messages: [], otpCode: null });
     } catch (err: any) {
       console.error("Check SMS error:", err);
-      res.status(500).json({ message: err.message });
-    }
-  });
-
-  // Keep simulate-sms for demo/fallback (when TellaBot balance is low)
-  app.post("/api/orders/:id/simulate-sms", requireAuth, async (req, res) => {
-    try {
-      const user = req.user as any;
-      const order = await storage.getOrder(Number(req.params.id));
-      if (!order) return res.status(404).json({ message: "Order not found" });
-      if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
-      if (order.status !== "waiting") return res.status(400).json({ message: "Order not in waiting state" });
-
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const fakeMessage = [{ timestamp: Math.floor(Date.now()/1000).toString(), sender: "12345", text: `Your verification code is: ${otpCode}` }];
-      await storage.updateOrderSms(order.id, JSON.stringify(fakeMessage), otpCode);
-
-      res.json({ otpCode, message: "SMS simulated", messages: fakeMessage });
-    } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
@@ -421,20 +443,20 @@ export async function registerRoutes(
       const order = await storage.getOrder(Number(req.params.id));
       if (!order) return res.status(404).json({ message: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
-      if (order.status !== "waiting") return res.status(400).json({ message: "Cannot cancel this order" });
+      if (order.status !== "pending" && order.status !== "waiting") {
+        return res.status(400).json({ message: "Cannot cancel this order" });
+      }
 
-      // Reject on TellaBot side
-      if (order.tellabotRequestId) {
+      if (order.proxnumId) {
         try {
-          await tellabotAPI("reject", { id: order.tellabotRequestId });
+          await proxnumApi.cancelVirtual(order.proxnumId);
         } catch (e) {
-          console.error("TellaBot reject error:", e);
+          console.error("Proxnum cancel error:", e);
         }
       }
 
       await storage.cancelOrder(order.id);
 
-      // Refund balance
       const freshUser = await storage.getUser(user.id);
       if (freshUser) {
         const newBalance = (parseFloat(freshUser.balance) + parseFloat(order.price)).toFixed(2);
@@ -451,6 +473,182 @@ export async function registerRoutes(
       }
 
       res.json({ message: "Order cancelled and refunded" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ========== RENTALS (Proxnum rental numbers) ==========
+
+  app.post("/api/rentals", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const { serviceId, serviceName, country, days } = req.body;
+      const rentalCountry = country || "us";
+      const rentalDays = days || 7;
+
+      if (!serviceId && !serviceName) return res.status(400).json({ message: "serviceId or serviceName required" });
+
+      let service;
+      if (serviceId) service = await storage.getService(Number(serviceId));
+      if (!service && serviceName) {
+        service = await storage.getServiceBySlug(serviceName.toLowerCase().replace(/[^a-z0-9]/g, ""));
+        if (!service) service = await storage.getServiceByName(serviceName);
+      }
+      if (!service) return res.status(404).json({ message: "Service not found" });
+
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(404).json({ message: "User not found" });
+
+      const countries = await getCachedCountries();
+      const resolvedCountry = findCountryCode(countries, rentalCountry) || getUSCountryCode(countries);
+
+      let rentalPriceData;
+      try {
+        rentalPriceData = await proxnumApi.getRentalPrices(service.slug, resolvedCountry);
+      } catch (e) {}
+
+      const baseDayPrice = rentalPriceData?.price
+        ? parseFloat(rentalPriceData.price)
+        : parseFloat(service.price) * 2;
+      const totalBase = baseDayPrice * rentalDays;
+      const finalPrice = await calculatePrice(totalBase, service.slug, resolvedCountry);
+
+      const balance = parseFloat(freshUser.balance);
+      if (balance < finalPrice) return res.status(400).json({ message: "Insufficient balance" });
+
+      const pnResult = await proxnumApi.buyRental(service.slug, resolvedCountry, rentalDays);
+
+      if (pnResult.error) {
+        return res.status(503).json({
+          message: pnResult.error.message || "No rental numbers available. Try again later.",
+        });
+      }
+
+      const proxnumId = String(pnResult.id || pnResult.rental_id || "");
+      const phoneNumber = pnResult.number || pnResult.phone || "";
+
+      if (!phoneNumber) {
+        return res.status(503).json({ message: "No rental numbers available right now." });
+      }
+
+      const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
+      const newBalance = (balance - finalPrice).toFixed(2);
+      await storage.updateUserBalance(user.id, newBalance);
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + rentalDays * 24 * 60 * 60 * 1000);
+
+      const rental = await storage.createRental({
+        userId: user.id,
+        serviceId: service.id,
+        serviceName: service.name,
+        phoneNumber: formattedPhone,
+        status: "active",
+        price: finalPrice.toFixed(2),
+        country: rentalCountry,
+        days: rentalDays,
+        proxnumId,
+        createdAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        cancelledAt: null,
+      });
+
+      await storage.createTransaction({
+        userId: user.id,
+        type: "purchase",
+        amount: `-${finalPrice.toFixed(2)}`,
+        description: `${service.name} rental (${rentalDays} days)`,
+        orderId: rental.id,
+        stripeSessionId: null,
+        createdAt: now.toISOString(),
+      });
+
+      res.json(rental);
+    } catch (err: any) {
+      console.error("Rental error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/rentals", requireAuth, async (req, res) => {
+    const user = req.user as any;
+    res.json(await storage.getUserRentals(user.id));
+  });
+
+  app.get("/api/rentals/active", requireAuth, async (req, res) => {
+    const user = req.user as any;
+    res.json(await storage.getActiveRentals(user.id));
+  });
+
+  app.get("/api/rentals/:id", requireAuth, async (req, res) => {
+    const user = req.user as any;
+    const rental = await storage.getRental(Number(req.params.id));
+    if (!rental) return res.status(404).json({ message: "Rental not found" });
+    if (rental.userId !== user.id && (req.user as any)?.role !== "admin") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    res.json(rental);
+  });
+
+  app.get("/api/rentals/:id/messages", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const rental = await storage.getRental(Number(req.params.id));
+      if (!rental) return res.status(404).json({ message: "Rental not found" });
+      if (rental.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+      if (rental.proxnumId && rental.status === "active") {
+        try {
+          const pnResult = await proxnumApi.getRentalMessages(rental.proxnumId);
+          const apiMessages = pnResult.data || pnResult;
+          if (Array.isArray(apiMessages)) {
+            for (const msg of apiMessages) {
+              const existingMessages = await storage.getRentalMessages(rental.id);
+              const msgText = msg.message || msg.text || msg.sms || "";
+              const alreadyStored = existingMessages.some(
+                (m) => m.message === msgText && m.sender === (msg.sender || msg.from || "")
+              );
+              if (!alreadyStored && msgText) {
+                await storage.createRentalMessage({
+                  rentalId: rental.id,
+                  sender: msg.sender || msg.from || null,
+                  message: msgText,
+                  receivedAt: msg.received_at || msg.timestamp || new Date().toISOString(),
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Fetch rental messages error:", e);
+        }
+      }
+
+      const messages = await storage.getRentalMessages(rental.id);
+      res.json(messages);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/rentals/:id/cancel", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const rental = await storage.getRental(Number(req.params.id));
+      if (!rental) return res.status(404).json({ message: "Rental not found" });
+      if (rental.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
+      if (rental.status !== "active") return res.status(400).json({ message: "Rental is not active" });
+
+      if (rental.proxnumId) {
+        try {
+          await proxnumApi.cancelRental(rental.proxnumId);
+        } catch (e) {
+          console.error("Proxnum rental cancel error:", e);
+        }
+      }
+
+      await storage.cancelRental(rental.id);
+      res.json({ message: "Rental cancelled" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -579,20 +777,25 @@ export async function registerRoutes(
   app.get("/api/admin/stats", requireAdmin, async (_req, res) => {
     const allUsers = await storage.getAllUsers();
     const allOrders = await storage.getAllOrders();
+    const allRentals = await storage.getAllRentals();
     const completedOrders = allOrders.filter(o => o.status === "completed" || o.status === "received");
-    const revenue = completedOrders.reduce((sum, o) => sum + parseFloat(o.price), 0);
-    // Check TellaBot balance
-    let tellabotBalance = "N/A";
+    const revenue = completedOrders.reduce((sum, o) => sum + parseFloat(o.price), 0)
+      + allRentals.filter(r => r.status !== "cancelled").reduce((sum, r) => sum + parseFloat(r.price), 0);
+
+    let proxnumBalance = "N/A";
     try {
-      const tbBal = await tellabotAPI("balance");
-      if (tbBal.status === "ok") tellabotBalance = `$${tbBal.message}`;
+      const balResult = await proxnumApi.getUserBalance();
+      const balData = balResult.data || balResult;
+      if (balData.balance !== undefined) proxnumBalance = `$${balData.balance}`;
     } catch (e) {}
+
     res.json({
       totalUsers: allUsers.length,
       totalOrders: allOrders.length,
+      totalRentals: allRentals.length,
       completedOrders: completedOrders.length,
       revenue: revenue.toFixed(2),
-      tellabotBalance,
+      proxnumBalance,
     });
   });
 
@@ -600,6 +803,21 @@ export async function registerRoutes(
     try {
       await storage.updateService(Number(req.params.id), req.body);
       res.json({ message: "Service updated" });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/admin/settings", requireAdmin, async (_req, res) => {
+    const multiplier = await storage.getSetting("price_multiplier");
+    const defaultCountry = await storage.getSetting("default_country");
+    res.json({ price_multiplier: multiplier || "1.5", default_country: defaultCountry || "us" });
+  });
+
+  app.put("/api/admin/settings", requireAdmin, async (req, res) => {
+    try {
+      const { price_multiplier, default_country } = req.body;
+      if (price_multiplier !== undefined) await storage.setSetting("price_multiplier", String(price_multiplier));
+      if (default_country !== undefined) await storage.setSetting("default_country", String(default_country));
+      res.json({ message: "Settings updated" });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
@@ -627,7 +845,8 @@ export async function registerRoutes(
   app.post("/api/v1/order", requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
-      const { service } = req.body;
+      const { service, country } = req.body;
+      const orderCountry = country || "us";
       if (!service) return res.status(400).json({ error: "service name required" });
 
       const allServices = await storage.getAllServices();
@@ -640,15 +859,21 @@ export async function registerRoutes(
       const price = parseFloat(svc.price);
       if (balance < price) return res.status(400).json({ error: "Insufficient balance" });
 
-      // Call TellaBot
-      const tbResult = await tellabotAPI("request", { service: svc.name });
-      if (tbResult.status !== "ok" || !tbResult.message?.[0]?.mdn) {
-        return res.status(503).json({ error: tbResult.message || "No numbers available" });
+      const countries = await getCachedCountries();
+      const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
+
+      const pnResult = await proxnumApi.buyVirtual(svc.slug, resolvedCountry);
+      if (pnResult.error) {
+        return res.status(503).json({ error: pnResult.error.message || "No numbers available" });
       }
 
-      const tbData = tbResult.message[0];
-      const phoneNumber = tbData.mdn.startsWith("+") ? tbData.mdn : `+${tbData.mdn}`;
+      const proxnumId = String(pnResult.id || pnResult.activation_id || "");
+      const phoneNumber = pnResult.number || pnResult.phone || "";
+      if (!phoneNumber) {
+        return res.status(503).json({ error: "No numbers available" });
+      }
 
+      const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
       const newBalance = (balance - price).toFixed(2);
       await storage.updateUserBalance(user.id, newBalance);
 
@@ -657,18 +882,18 @@ export async function registerRoutes(
 
       const order = await storage.createOrder({
         userId: user.id, serviceId: svc.id, serviceName: svc.name,
-        phoneNumber, status: "waiting", otpCode: null, smsMessages: null,
-        price: svc.price, tellabotRequestId: tbData.id, tellabotMdn: tbData.mdn,
+        phoneNumber: formattedPhone, status: "pending", otpCode: null, smsMessages: null,
+        price: svc.price, country: resolvedCountry, proxnumId,
         createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
       });
 
       await storage.createTransaction({
         userId: user.id, type: "purchase", amount: `-${svc.price}`,
-        description: `${svc.name} number rental`, orderId: order.id,
+        description: `${svc.name} OTP number`, orderId: order.id,
         stripeSessionId: null, createdAt: now.toISOString(),
       });
 
-      res.json({ orderId: order.id, phoneNumber, status: "waiting", expiresAt: order.expiresAt });
+      res.json({ orderId: order.id, phoneNumber: formattedPhone, status: "pending", expiresAt: order.expiresAt });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
@@ -677,25 +902,39 @@ export async function registerRoutes(
     const order = await storage.getOrder(Number(req.params.id));
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (order.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
-    
-    // Auto-check SMS if still waiting
-    if (order.status === "waiting" && order.tellabotRequestId) {
+
+    if ((order.status === "pending" || order.status === "waiting") && order.proxnumId) {
       try {
-        const tbResult = await tellabotAPI("read_sms", { id: order.tellabotRequestId });
-        if (tbResult.status === "ok" && Array.isArray(tbResult.message) && tbResult.message.length > 0) {
-          const messages = tbResult.message;
-          let otpCode: string | null = null;
-          for (const msg of messages) {
-            const code = extractOTPFromText(msg.text || "");
-            if (code) { otpCode = code; break; }
+        const pnResult = await proxnumApi.getVirtualStatus(order.proxnumId);
+        if (!pnResult.error) {
+          const statusData = pnResult.data || pnResult;
+          const code = statusData.code || statusData.msg || statusData.sms_code || null;
+          const fullSms = statusData.full_sms || statusData.sms || statusData.message || "";
+
+          if (code && /^\d{4,8}$/.test(code)) {
+            const messages = [{ timestamp: Date.now().toString(), sender: "service", text: fullSms || `Code: ${code}` }];
+            await storage.updateOrderSms(order.id, JSON.stringify(messages), code);
+            return res.json({
+              orderId: order.id, phoneNumber: order.phoneNumber,
+              status: "received", otpCode: code,
+              messages: [fullSms || `Code: ${code}`],
+              expiresAt: order.expiresAt,
+            });
           }
-          await storage.updateOrderSms(order.id, JSON.stringify(messages), otpCode || undefined);
-          return res.json({
-            orderId: order.id, phoneNumber: order.phoneNumber,
-            status: "received", otpCode,
-            messages: messages.map((m: any) => m.text),
-            expiresAt: order.expiresAt,
-          });
+
+          if (fullSms) {
+            const extracted = extractOTPFromText(fullSms);
+            if (extracted) {
+              const messages = [{ timestamp: Date.now().toString(), sender: "service", text: fullSms }];
+              await storage.updateOrderSms(order.id, JSON.stringify(messages), extracted);
+              return res.json({
+                orderId: order.id, phoneNumber: order.phoneNumber,
+                status: "received", otpCode: extracted,
+                messages: [fullSms],
+                expiresAt: order.expiresAt,
+              });
+            }
+          }
         }
       } catch (e) {}
     }
@@ -714,10 +953,10 @@ export async function registerRoutes(
       const order = await storage.getOrder(Number(req.params.id));
       if (!order) return res.status(404).json({ error: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
-      if (order.status !== "waiting") return res.status(400).json({ error: "Cannot cancel" });
+      if (order.status !== "pending" && order.status !== "waiting") return res.status(400).json({ error: "Cannot cancel" });
 
-      if (order.tellabotRequestId) {
-        try { await tellabotAPI("reject", { id: order.tellabotRequestId }); } catch (e) {}
+      if (order.proxnumId) {
+        try { await proxnumApi.cancelVirtual(order.proxnumId); } catch (e) {}
       }
 
       await storage.cancelOrder(order.id);
@@ -727,6 +966,62 @@ export async function registerRoutes(
         await storage.updateUserBalance(user.id, newBalance);
       }
       res.json({ message: "Order cancelled and refunded" });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post("/api/v1/rental", requireApiKey, async (req, res) => {
+    try {
+      const user = (req as any).apiUser;
+      const { service, country, days } = req.body;
+      const rentalCountry = country || "us";
+      const rentalDays = days || 7;
+      if (!service) return res.status(400).json({ error: "service name required" });
+
+      const allServices = await storage.getAllServices();
+      const svc = allServices.find(s => s.name === service || s.slug === service || s.id === Number(service));
+      if (!svc) return res.status(404).json({ error: "Service not found" });
+
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(404).json({ error: "User not found" });
+
+      const baseDayPrice = parseFloat(svc.price) * 2;
+      const totalBase = baseDayPrice * rentalDays;
+      const finalPrice = await calculatePrice(totalBase, svc.slug, rentalCountry);
+
+      const balance = parseFloat(freshUser.balance);
+      if (balance < finalPrice) return res.status(400).json({ error: "Insufficient balance" });
+
+      const pnResult = await proxnumApi.buyRental(svc.slug || svc.name, rentalCountry, rentalDays);
+      if (pnResult.error) {
+        return res.status(503).json({ error: pnResult.error.message || "No rental numbers available" });
+      }
+
+      const pnData = pnResult.data || pnResult;
+      const proxnumId = String(pnData.id || pnData.rental_id || "");
+      const phoneNumber = pnData.number || pnData.phone || "";
+      if (!phoneNumber) return res.status(503).json({ error: "No rental numbers available" });
+
+      const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
+      const newBalance = (balance - finalPrice).toFixed(2);
+      await storage.updateUserBalance(user.id, newBalance);
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + rentalDays * 24 * 60 * 60 * 1000);
+
+      const rental = await storage.createRental({
+        userId: user.id, serviceId: svc.id, serviceName: svc.name,
+        phoneNumber: formattedPhone, status: "active", price: finalPrice.toFixed(2),
+        country: rentalCountry, days: rentalDays, proxnumId,
+        createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), cancelledAt: null,
+      });
+
+      await storage.createTransaction({
+        userId: user.id, type: "purchase", amount: `-${finalPrice.toFixed(2)}`,
+        description: `${svc.name} rental (${rentalDays} days)`, orderId: rental.id,
+        stripeSessionId: null, createdAt: now.toISOString(),
+      });
+
+      res.json({ rentalId: rental.id, phoneNumber: formattedPhone, status: "active", expiresAt: rental.expiresAt });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
@@ -750,11 +1045,20 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // Initial service sync on startup
-  fetchTellabotServices().then(() => {
-    console.log("TellaBot services synced");
+  // Proxnum balance endpoint
+  app.get("/api/proxnum/balance", requireAdmin, async (_req, res) => {
+    try {
+      const result = await proxnumApi.getUserBalance();
+      res.json(result.data || result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  syncProxnumServices().then(() => {
+    console.log("Proxnum services synced on startup");
   }).catch(err => {
-    console.error("TellaBot initial sync failed:", err);
+    console.error("Proxnum initial sync failed:", err);
   });
 
   return httpServer;

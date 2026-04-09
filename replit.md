@@ -1,13 +1,32 @@
 # GetOTPs
 
 ## Overview
-GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent temporary US phone numbers to receive SMS OTP verification codes for 500+ services.
+GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent temporary phone numbers to receive SMS OTP verification codes for 1000+ services. Powered by the Proxnum API for real virtual number provisioning and SMS delivery.
 
 ## Architecture
-- **Backend**: Express.js with SQLite (better-sqlite3), session-based auth
+- **Backend**: Express.js with SQLite (better-sqlite3), Drizzle ORM, session-based auth (Passport.js)
 - **Frontend**: React 18 + Vite, wouter for routing
 - **3D**: @react-three/fiber v8 + @react-three/drei v9 + three.js v0.183
+- **SMS Provider**: Proxnum API (https://proxnum.com/api/v1) — Bearer token auth via PROXNUM_API_KEY env var
 - **Styling**: Vanilla CSS with `@layer` system in `client/src/index.css`
+
+## SMS Provider Integration (Proxnum)
+- **API Client**: `server/proxnum.ts` — typed wrapper with caching for services/countries/prices
+- **Service Sync**: On startup, fetches all services and aggregated prices from Proxnum, applies global markup multiplier, upserts into DB
+- **Country Codes**: Proxnum uses numeric country codes (e.g., "12" = USA virtual, "1" = Ukraine, "0" = Russia). Resolved via `findCountryCode()`
+- **Price Markup**: `finalPrice = basePrice × globalMultiplier × serviceMultiplier` — settings stored in DB `settings` table
+- **Virtual Numbers**: POST `/virtual/buy`, GET `/virtual/{id}/status`, POST `/virtual/{id}/cancel`
+- **Rentals**: POST `/rental/buy`, GET `/rental/{id}/status`, POST `/rental/cancel`, GET `/rentals/{id}/messages`
+
+## Database Schema (SQLite)
+- `users` — auth, balance, API key, role
+- `services` — cached from Proxnum with slug=service code (e.g., "tg", "wa", "fb")
+- `orders` — virtual number activations with proxnum_id, country, status tracking
+- `rentals` — longer-term number leases with days, expiry, proxnum_id
+- `rental_messages` — SMS messages received on rented numbers
+- `settings` — key/value config (price_multiplier, default_country, per-service multipliers)
+- `transactions` — financial ledger (deposit, purchase, refund)
+- `crypto_deposits` — crypto payment flow
 
 ## Key Design Decisions
 - **Single WebGL canvas**: Only the HeroScene uses R3F Canvas. PhoneMockup is CSS-only to prevent GPU context loss.
@@ -30,12 +49,26 @@ client/src/
   index.css                  - Complete design system (~1237 lines, @layer organized)
 server/
   index.ts                   - Express server entry
-  routes.ts                  - API routes
-  db.ts                      - SQLite database
+  routes.ts                  - API routes (auth, orders, rentals, crypto, admin)
+  proxnum.ts                 - Proxnum API client with caching
+  storage.ts                 - Database storage layer (Drizzle ORM)
+shared/
+  schema.ts                  - Drizzle schema definitions
 ```
+
+## API Endpoints
+- **Auth**: POST /api/auth/register, /login, /logout, GET /me
+- **Services**: GET /api/services, /api/countries, /api/prices
+- **Orders (Virtual)**: POST /api/orders, GET /api/orders/active, POST /:id/check-sms, /:id/cancel
+- **Rentals**: POST /api/rentals, GET /api/rentals/active, GET /:id/messages, POST /:id/cancel
+- **Crypto**: GET /api/crypto/currencies, POST /create-deposit, POST /:id/submit-hash
+- **Admin**: GET /api/admin/stats, /users, PUT /services/:id, GET/PUT /settings, GET /proxnum/balance
+- **API v1**: GET /api/v1/services, POST /order, GET /order/:id, POST /order/:id/cancel, POST /rental
 
 ## Important Notes
 - Three.js packages pinned: fiber@8.18.0, drei@9.122.0, three@0.183.2 (React 18 compatible)
 - Install three.js packages with `--legacy-peer-deps`
 - WebGL unavailable in headless screenshot tool — always shows fallback. Works in real browsers.
 - Two core services: "Receive OTP" (Key icon, cyan) and "Rent a Number" (Server icon, violet)
+- Proxnum API key stored as PROXNUM_API_KEY environment secret
+- Default admin: admin@getotps.com / admin123

@@ -1,4 +1,13 @@
-import { type User, type InsertUser, users, type Service, type InsertService, services, type Order, type InsertOrder, orders, type Transaction, type InsertTransaction, transactions, type CryptoDeposit, type InsertCryptoDeposit, cryptoDeposits } from "@shared/schema";
+import {
+  type User, type InsertUser, users,
+  type Service, type InsertService, services,
+  type Order, type InsertOrder, orders,
+  type Rental, type InsertRental, rentals,
+  type RentalMessage, type InsertRentalMessage, rentalMessages,
+  type Setting, settings,
+  type Transaction, type InsertTransaction, transactions,
+  type CryptoDeposit, type InsertCryptoDeposit, cryptoDeposits,
+} from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and, desc, or } from "drizzle-orm";
@@ -10,7 +19,6 @@ sqlite.pragma("journal_mode = WAL");
 
 export const db = drizzle(sqlite);
 
-// Create tables if they don't exist
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,15 +46,45 @@ sqlite.exec(`
     service_id INTEGER NOT NULL,
     service_name TEXT NOT NULL DEFAULT '',
     phone_number TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'waiting',
+    status TEXT NOT NULL DEFAULT 'pending',
     otp_code TEXT,
     sms_messages TEXT,
     price TEXT NOT NULL,
-    tellabot_request_id TEXT,
-    tellabot_mdn TEXT,
+    country TEXT NOT NULL DEFAULT 'us',
+    proxnum_id TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     completed_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS rentals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    service_id INTEGER NOT NULL,
+    service_name TEXT NOT NULL DEFAULT '',
+    phone_number TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    price TEXT NOT NULL,
+    country TEXT NOT NULL DEFAULT 'us',
+    days INTEGER NOT NULL DEFAULT 7,
+    proxnum_id TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    cancelled_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS rental_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rental_id INTEGER NOT NULL,
+    sender TEXT,
+    message TEXT NOT NULL,
+    received_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    value TEXT
   );
 
   CREATE TABLE IF NOT EXISTS transactions (
@@ -75,8 +113,27 @@ sqlite.exec(`
   );
 `);
 
+try {
+  sqlite.exec(`ALTER TABLE orders ADD COLUMN country TEXT NOT NULL DEFAULT 'us'`);
+} catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE orders ADD COLUMN proxnum_id TEXT`);
+} catch (e) {}
+
+function seedSettings() {
+  const defaults: Record<string, string> = {
+    price_multiplier: "1.5",
+    default_country: "us",
+  };
+  for (const [key, value] of Object.entries(defaults)) {
+    const existing = db.select().from(settings).where(eq(settings.key, key)).get();
+    if (!existing) {
+      db.insert(settings).values({ key, value }).run();
+    }
+  }
+}
+
 async function seedDatabase() {
-  // Create default admin user
   const existingAdmin = db.select().from(users).where(eq(users.email, "admin@getotps.com")).get();
   if (!existingAdmin) {
     const hashedPassword = await bcrypt.hash("admin123", 10);
@@ -91,12 +148,12 @@ async function seedDatabase() {
     }).run();
     console.log("Created default admin user: admin@getotps.com / admin123");
   }
+  seedSettings();
 }
 
 seedDatabase().catch(console.error);
 
 export interface IStorage {
-  // Users
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -107,29 +164,42 @@ export interface IStorage {
   generateApiKey(userId: number): Promise<string>;
   getAllUsers(): Promise<User[]>;
 
-  // Services (now backed by TellaBot — cached in DB)
   getAllServices(): Promise<Service[]>;
   getService(id: number): Promise<Service | undefined>;
   getServiceBySlug(slug: string): Promise<Service | undefined>;
+  getServiceByName(name: string): Promise<Service | undefined>;
   updateService(id: number, data: Partial<InsertService>): Promise<void>;
   upsertServices(serviceList: InsertService[]): Promise<void>;
 
-  // Orders
   createOrder(data: InsertOrder): Promise<Order>;
   getOrder(id: number): Promise<Order | undefined>;
-  getOrderByTellabotId(tellabotId: string): Promise<Order | undefined>;
+  getOrderByProxnumId(proxnumId: string): Promise<Order | undefined>;
   getUserOrders(userId: number): Promise<Order[]>;
   getActiveOrders(userId: number): Promise<Order[]>;
+  getPendingOrders(): Promise<Order[]>;
   updateOrderStatus(id: number, status: string, otpCode?: string): Promise<void>;
   updateOrderSms(id: number, smsMessages: string, otpCode?: string): Promise<void>;
   cancelOrder(id: number): Promise<void>;
   getAllOrders(): Promise<Order[]>;
 
-  // Transactions
+  createRental(data: InsertRental): Promise<Rental>;
+  getRental(id: number): Promise<Rental | undefined>;
+  getRentalByProxnumId(proxnumId: string): Promise<Rental | undefined>;
+  getUserRentals(userId: number): Promise<Rental[]>;
+  getActiveRentals(userId: number): Promise<Rental[]>;
+  updateRentalStatus(id: number, status: string): Promise<void>;
+  cancelRental(id: number): Promise<void>;
+  getAllRentals(): Promise<Rental[]>;
+
+  createRentalMessage(data: InsertRentalMessage): Promise<RentalMessage>;
+  getRentalMessages(rentalId: number): Promise<RentalMessage[]>;
+
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<void>;
+
   createTransaction(data: InsertTransaction): Promise<Transaction>;
   getUserTransactions(userId: number): Promise<Transaction[]>;
 
-  // Crypto Deposits
   createCryptoDeposit(data: InsertCryptoDeposit): Promise<CryptoDeposit>;
   getCryptoDeposit(id: number): Promise<CryptoDeposit | undefined>;
   getUserCryptoDeposits(userId: number): Promise<CryptoDeposit[]>;
@@ -189,15 +259,23 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(services).where(eq(services.slug, slug)).get();
   }
 
+  async getServiceByName(name: string): Promise<Service | undefined> {
+    return db.select().from(services).where(eq(services.name, name)).get();
+  }
+
   async updateService(id: number, data: Partial<InsertService>): Promise<void> {
     db.update(services).set(data).where(eq(services.id, id)).run();
   }
 
   async upsertServices(serviceList: InsertService[]): Promise<void> {
-    // Clear existing and re-insert (fast for cached data)
-    db.delete(services).run();
     for (const svc of serviceList) {
-      db.insert(services).values(svc).run();
+      const existing = db.select().from(services).where(eq(services.slug, svc.slug)).get();
+      if (existing) {
+        db.update(services).set({ price: svc.price, isActive: svc.isActive, category: svc.category })
+          .where(eq(services.slug, svc.slug)).run();
+      } else {
+        db.insert(services).values(svc).run();
+      }
     }
   }
 
@@ -209,8 +287,8 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(orders).where(eq(orders.id, id)).get();
   }
 
-  async getOrderByTellabotId(tellabotId: string): Promise<Order | undefined> {
-    return db.select().from(orders).where(eq(orders.tellabotRequestId, tellabotId)).get();
+  async getOrderByProxnumId(proxnumId: string): Promise<Order | undefined> {
+    return db.select().from(orders).where(eq(orders.proxnumId, proxnumId)).get();
   }
 
   async getUserOrders(userId: number): Promise<Order[]> {
@@ -221,8 +299,15 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(orders)
       .where(and(
         eq(orders.userId, userId),
-        or(eq(orders.status, "waiting"), eq(orders.status, "received"))
+        or(eq(orders.status, "pending"), eq(orders.status, "waiting"), eq(orders.status, "received"))
       ))
+      .orderBy(desc(orders.id))
+      .all();
+  }
+
+  async getPendingOrders(): Promise<Order[]> {
+    return db.select().from(orders)
+      .where(or(eq(orders.status, "pending"), eq(orders.status, "waiting")))
       .orderBy(desc(orders.id))
       .all();
   }
@@ -246,6 +331,63 @@ export class DatabaseStorage implements IStorage {
 
   async getAllOrders(): Promise<Order[]> {
     return db.select().from(orders).orderBy(desc(orders.id)).all();
+  }
+
+  async createRental(data: InsertRental): Promise<Rental> {
+    return db.insert(rentals).values(data).returning().get();
+  }
+
+  async getRental(id: number): Promise<Rental | undefined> {
+    return db.select().from(rentals).where(eq(rentals.id, id)).get();
+  }
+
+  async getRentalByProxnumId(proxnumId: string): Promise<Rental | undefined> {
+    return db.select().from(rentals).where(eq(rentals.proxnumId, proxnumId)).get();
+  }
+
+  async getUserRentals(userId: number): Promise<Rental[]> {
+    return db.select().from(rentals).where(eq(rentals.userId, userId)).orderBy(desc(rentals.id)).all();
+  }
+
+  async getActiveRentals(userId: number): Promise<Rental[]> {
+    return db.select().from(rentals)
+      .where(and(eq(rentals.userId, userId), eq(rentals.status, "active")))
+      .orderBy(desc(rentals.id))
+      .all();
+  }
+
+  async updateRentalStatus(id: number, status: string): Promise<void> {
+    db.update(rentals).set({ status }).where(eq(rentals.id, id)).run();
+  }
+
+  async cancelRental(id: number): Promise<void> {
+    db.update(rentals).set({ status: "cancelled", cancelledAt: new Date().toISOString() }).where(eq(rentals.id, id)).run();
+  }
+
+  async getAllRentals(): Promise<Rental[]> {
+    return db.select().from(rentals).orderBy(desc(rentals.id)).all();
+  }
+
+  async createRentalMessage(data: InsertRentalMessage): Promise<RentalMessage> {
+    return db.insert(rentalMessages).values(data).returning().get();
+  }
+
+  async getRentalMessages(rentalId: number): Promise<RentalMessage[]> {
+    return db.select().from(rentalMessages).where(eq(rentalMessages.rentalId, rentalId)).orderBy(desc(rentalMessages.id)).all();
+  }
+
+  async getSetting(key: string): Promise<string | null> {
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    return row?.value ?? null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    const existing = db.select().from(settings).where(eq(settings.key, key)).get();
+    if (existing) {
+      db.update(settings).set({ value }).where(eq(settings.key, key)).run();
+    } else {
+      db.insert(settings).values({ key, value }).run();
+    }
   }
 
   async createTransaction(data: InsertTransaction): Promise<Transaction> {
