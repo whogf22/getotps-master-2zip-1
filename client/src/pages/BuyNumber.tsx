@@ -56,7 +56,7 @@ export default function BuyNumber() {
     return matchSearch && matchCategory;
   }) || [];
 
-  const categories = [...new Set(services?.map((s: any) => s.category).filter(Boolean))].sort(
+  const categories = Array.from(new Set(services?.map((s: any) => s.category).filter(Boolean))).sort(
     (a, b) => (CATEGORY_ORDER.indexOf(a) === -1 ? 999 : CATEGORY_ORDER.indexOf(a)) - (CATEGORY_ORDER.indexOf(b) === -1 ? 999 : CATEGORY_ORDER.indexOf(b))
   );
 
