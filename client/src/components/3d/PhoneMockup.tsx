@@ -135,7 +135,7 @@ export function PhoneMockup() {
         <span style={{ color: "#22d3ee" }}>🔒</span> Anonymous
       </div>
       <div className="float-card float-card-3">
-        ⚡ From <strong style={{ color: "#22d3ee" }}>$0.15</strong>
+        <span style={{ color: "#22c55e" }}>✓</span> Instant Delivery
       </div>
     </div>
   );

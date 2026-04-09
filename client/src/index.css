@@ -665,9 +665,6 @@
   .l-svc-icon-violet { background: rgba(139,92,246,0.12); color: #a78bfa; border: 1px solid rgba(139,92,246,0.2); }
   .l-svc-title { font-size: 20px; font-weight: 800; color: #fff; margin-bottom: 8px; }
   .l-svc-desc { font-size: 13.5px; color: rgba(255,255,255,0.3); line-height: 1.65; margin-bottom: 12px; }
-  .l-svc-price { font-size: 13px; color: rgba(255,255,255,0.3); margin-bottom: 18px; }
-  .l-svc-price strong { color: #22d3ee; font-weight: 700; }
-  .l-svc-price-v strong { color: #a78bfa; }
   .l-svc-btn {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 10px 22px; border-radius: 12px;
@@ -726,7 +723,6 @@
   .l-plat-icon { font-size: 26px; margin-bottom: 6px; transition: transform 0.25s; }
   .l-plat:hover .l-plat-icon { transform: scale(1.2); }
   .l-plat-name { font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.6); margin-bottom: 3px; }
-  .l-plat-price { font-size: 10px; color: #22d3ee; font-weight: 700; }
   .l-plat-hot { position: absolute; top: 5px; right: 5px; font-size: 9px; }
 
   /* ── COUNTRY CARDS ── */
@@ -834,54 +830,6 @@
     display: flex; align-items: center; gap: 10px;
     font-size: 13.5px; color: rgba(255,255,255,0.45);
   }
-
-  /* ── PRICING ── */
-  .l-price {
-    padding: 32px 28px; border-radius: 22px;
-    display: flex; flex-direction: column;
-  }
-  .l-price-pop {
-    border-color: rgba(14,165,233,0.3) !important;
-    background: linear-gradient(150deg, rgba(14,165,233,0.06), rgba(14,165,233,0.01)) !important;
-    box-shadow: 0 20px 60px rgba(14,165,233,0.08), 0 0 40px rgba(14,165,233,0.04) !important;
-    transform: scale(1.03);
-  }
-  .l-price-pop:hover { transform: scale(1.03) translateY(-4px) !important; }
-  .l-price-badge {
-    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-    background: linear-gradient(135deg, hsl(185,72%,36%), hsl(185,72%,50%));
-    padding: 4px 20px; font-size: 10px; font-weight: 700; color: #fff;
-    border-radius: 0 0 12px 12px; text-transform: uppercase; letter-spacing: 0.06em;
-  }
-  .l-price-icon {
-    width: 44px; height: 44px; border-radius: 12px;
-    background: rgba(255,255,255,0.04);
-    display: flex; align-items: center; justify-content: center;
-    color: #22d3ee; margin-bottom: 16px;
-  }
-  .l-price-name { font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 4px; }
-  .l-price-tag { font-size: 13px; color: rgba(255,255,255,0.3); margin-bottom: 18px; }
-  .l-price-amount { font-size: 30px; font-weight: 900; color: #fff; margin-bottom: 4px; }
-  .l-price-amount span { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.3); margin-left: 6px; }
-  .l-price-feats {
-    display: flex; flex-direction: column; gap: 8px;
-    margin: 20px 0; flex: 1;
-  }
-  .l-price-feats li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,0.45); }
-  .l-price-btn {
-    width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
-    padding: 12px 0; border-radius: 12px;
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-    color: rgba(255,255,255,0.7); font-size: 14px; font-weight: 700;
-    cursor: pointer; transition: all 0.25s;
-  }
-  .l-price-btn:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: #fff; }
-  .l-price-btn-pop {
-    background: linear-gradient(135deg, hsl(185,72%,34%), hsl(185,72%,48%));
-    border-color: transparent; color: #fff;
-    box-shadow: 0 0 24px rgba(14,165,233,0.25);
-  }
-  .l-price-btn-pop:hover { box-shadow: 0 0 40px rgba(14,165,233,0.4); transform: translateY(-1px); background: linear-gradient(135deg, hsl(185,72%,36%), hsl(185,72%,52%)); }
 
   /* ── TRUST ── */
   .l-trust { padding: 28px 24px; }

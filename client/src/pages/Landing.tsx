@@ -10,7 +10,7 @@ import { LiveOTPTicker, NetworkStats } from "@/components/3d/LiveOTPFeed";
 import {
   Zap, Shield, Globe, ArrowRight, Star, Lock,
   ChevronDown, CheckCircle, Cpu, Key, RefreshCw,
-  BarChart3, Wifi, Server, Sparkles, Eye
+  Wifi, Server, Sparkles, Eye
 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 
@@ -62,22 +62,22 @@ function GlowCard({ children, className = "", glowColor = "cyan" }: { children: 
 }
 
 const PLATFORMS = [
-  { name: "WhatsApp", emoji: "💬", price: "1.92", color: "#25d366", hot: true },
-  { name: "Telegram", emoji: "✈️", price: "1.32", color: "#0088cc", hot: true },
-  { name: "Google", emoji: "🔍", price: "0.45", color: "#4285f4" },
-  { name: "TikTok", emoji: "🎵", price: "0.33", color: "#ff0050", hot: true },
-  { name: "Facebook", emoji: "👤", price: "0.40", color: "#1877f2" },
-  { name: "Instagram", emoji: "📸", price: "0.45", color: "#e1306c" },
-  { name: "Discord", emoji: "🎮", price: "0.30", color: "#5865f2" },
-  { name: "Binance", emoji: "₿", price: "0.75", color: "#f3ba2f", hot: true },
-  { name: "Twitter/X", emoji: "𝕏", price: "0.35", color: "#ffffff" },
-  { name: "Amazon", emoji: "🛒", price: "0.55", color: "#ff9900" },
-  { name: "Uber", emoji: "🚗", price: "0.60", color: "#276ef1" },
-  { name: "PayPal", emoji: "💳", price: "0.70", color: "#003087" },
-  { name: "Snapchat", emoji: "👻", price: "0.33", color: "#fffc00" },
-  { name: "LinkedIn", emoji: "💼", price: "0.40", color: "#0a66c2" },
-  { name: "Coinbase", emoji: "🪙", price: "0.75", color: "#0052ff" },
-  { name: "Microsoft", emoji: "🪟", price: "0.35", color: "#737373" },
+  { name: "WhatsApp", emoji: "💬", color: "#25d366", hot: true },
+  { name: "Telegram", emoji: "✈️", color: "#0088cc", hot: true },
+  { name: "Google", emoji: "🔍", color: "#4285f4" },
+  { name: "TikTok", emoji: "🎵", color: "#ff0050", hot: true },
+  { name: "Facebook", emoji: "👤", color: "#1877f2" },
+  { name: "Instagram", emoji: "📸", color: "#e1306c" },
+  { name: "Discord", emoji: "🎮", color: "#5865f2" },
+  { name: "Binance", emoji: "₿", color: "#f3ba2f", hot: true },
+  { name: "Twitter/X", emoji: "𝕏", color: "#ffffff" },
+  { name: "Amazon", emoji: "🛒", color: "#ff9900" },
+  { name: "Uber", emoji: "🚗", color: "#276ef1" },
+  { name: "PayPal", emoji: "💳", color: "#003087" },
+  { name: "Snapchat", emoji: "👻", color: "#fffc00" },
+  { name: "LinkedIn", emoji: "💼", color: "#0a66c2" },
+  { name: "Coinbase", emoji: "🪙", color: "#0052ff" },
+  { name: "Microsoft", emoji: "🪟", color: "#737373" },
 ];
 
 const COUNTRIES = [
@@ -112,7 +112,7 @@ function DashboardPanel() {
       </div>
       <div className="dash-header">
         <div className="dash-logo"><div className="dash-logo-dot" /><span>GetOTPs</span><span className="dash-pro">Pro</span></div>
-        <div className="dash-bal"><span className="dash-bal-l">Wallet</span><span className="dash-bal-v">$24.80</span></div>
+        <div className="dash-bal"><span className="dash-bal-l">Wallet</span><span className="dash-bal-v">Active</span></div>
       </div>
       <div className="dash-tabs">
         {tabs.map((t, i) => (
@@ -165,15 +165,15 @@ function DashboardPanel() {
         {tab === 2 && (
           <>
             {[
-              { svc: "WhatsApp", type: "OTP", amt: "-$1.92", time: "14:22" },
-              { svc: "Telegram", type: "Rental", amt: "-$0.50", time: "13:08" },
-              { svc: "TikTok", type: "Refund", amt: "+$0.33", time: "12:05" },
+              { svc: "WhatsApp", type: "OTP", amt: "Completed", time: "14:22" },
+              { svc: "Telegram", type: "Rental", amt: "Completed", time: "13:08" },
+              { svc: "TikTok", type: "Refund", amt: "Refunded", time: "12:05" },
             ].map((r, i) => (
               <div key={i} className="dash-row">
                 <span className="dash-row-svc" style={{ color: "#22d3ee" }}>{r.svc}</span>
                 <span className="dash-row-code" style={{ fontSize: "10px", opacity: 0.5 }}>{r.type}</span>
                 <span className="dash-row-time">{r.time}</span>
-                <span className={r.amt.startsWith("+") ? "text-emerald-400 text-[11px] font-bold" : "text-red-400/60 text-[11px] font-bold"}>{r.amt}</span>
+                <span className={r.amt === "Refunded" ? "text-emerald-400 text-[11px] font-bold" : "text-cyan-400/60 text-[11px] font-bold"}>{r.amt}</span>
               </div>
             ))}
           </>
@@ -217,7 +217,7 @@ export default function Landing() {
         <div className="l-nav-inner">
           <Logo size={30} />
           <nav className="l-nav-links">
-            {[["Services", "platforms"], ["How It Works", "how-it-works"], ["Pricing", "pricing"], ["FAQ", "faq"]].map(([label, id]) => (
+            {[["Services", "platforms"], ["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([label, id]) => (
               <button key={id} onClick={() => go(id)} className="l-nav-link">{label}</button>
             ))}
           </nav>
@@ -301,7 +301,6 @@ export default function Landing() {
                 <div className="l-svc-icon-wrap l-svc-icon-cyan"><Key className="w-6 h-6" /></div>
                 <h3 className="l-svc-title">Receive OTP</h3>
                 <p className="l-svc-desc">Get a temporary number, trigger the SMS, receive the code. 20-minute window. Perfect for one-time verification.</p>
-                <div className="l-svc-price">From <strong>$0.15</strong> / code</div>
                 <Link href="/register"><button className="l-svc-btn l-svc-btn-cyan">Start Now <ArrowRight className="w-4 h-4" /></button></Link>
               </div>
             </GlowCard>
@@ -313,7 +312,6 @@ export default function Landing() {
                 <div className="l-svc-icon-wrap l-svc-icon-violet"><Server className="w-6 h-6" /></div>
                 <h3 className="l-svc-title">Rent a Number</h3>
                 <p className="l-svc-desc">Full control of a virtual number for longer periods. Receive multiple SMS, hold for reuse, test integrations.</p>
-                <div className="l-svc-price l-svc-price-v">From <strong>$0.50</strong> / rental</div>
                 <Link href="/register"><button className="l-svc-btn l-svc-btn-violet">Rent Now <ArrowRight className="w-4 h-4" /></button></Link>
               </div>
             </GlowCard>
@@ -356,7 +354,6 @@ export default function Landing() {
                   <GlowCard className="l-plat">
                     <div className="l-plat-icon">{svc.emoji || "📱"}</div>
                     <div className="l-plat-name">{svc.name}</div>
-                    <div className="l-plat-price">${parseFloat(svc.price || "0.33").toFixed(2)}</div>
                     {svc.hot && <div className="l-plat-hot">🔥</div>}
                   </GlowCard>
                 </Link>
@@ -413,32 +410,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ════════ PRICING ════════ */}
-      <section id="pricing" className="l-section l-section-glow">
-        <div className="l-container">
-          <Reveal><div className="l-section-head"><span className="l-eyebrow">Transparent Pricing</span><h2 className="l-h2">Pay Only for What You Use</h2><p className="l-h2-sub">No subscriptions. Prepaid wallet, spend as you go.</p></div></Reveal>
-          <div className="grid md:grid-cols-3 gap-5">
-            {[
-              { name: "Receive OTP", tag: "One-time verification", price: "From $0.15", per: "per code", icon: <Key className="w-5 h-5" />, feats: ["20-min number window", "Full refund if no SMS", "500+ services", "Instant delivery", "No subscription"] },
-              { name: "Rent a Number", tag: "Extended rental", price: "From $0.50", per: "per rental", icon: <Server className="w-5 h-5" />, pop: true, feats: ["Keep the number longer", "Receive multiple SMS", "Full number control", "Works across all apps", "Extended options"] },
-              { name: "API / Bulk", tag: "Developer access", price: "Custom", per: "volume pricing", icon: <BarChart3 className="w-5 h-5" />, feats: ["REST API included", "Bulk ordering", "Webhook callbacks", "Reseller dashboard", "Priority support"] },
-            ].map((p, i) => (
-              <Reveal key={p.name} delay={i * 100}>
-                <GlowCard className={`l-price ${p.pop ? "l-price-pop" : ""}`} glowColor={p.pop ? "cyan" : undefined}>
-                  {p.pop && <div className="l-price-badge">Most Popular</div>}
-                  <div className="l-price-icon">{p.icon}</div>
-                  <h3 className="l-price-name">{p.name}</h3>
-                  <p className="l-price-tag">{p.tag}</p>
-                  <div className="l-price-amount">{p.price}<span>/ {p.per}</span></div>
-                  <ul className="l-price-feats">{p.feats.map(f => <li key={f}><CheckCircle className="w-3.5 h-3.5 text-cyan-400 shrink-0" />{f}</li>)}</ul>
-                  <Link href="/register"><button className={`l-price-btn ${p.pop ? "l-price-btn-pop" : ""}`}>{p.name === "API / Bulk" ? "Contact Us" : p.pop ? "Rent Now" : "Get OTP"} <ArrowRight className="w-4 h-4" /></button></Link>
-                </GlowCard>
-              </Reveal>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ════════ TRUST ════════ */}
       <section className="l-section">
         <div className="l-container">
@@ -471,7 +442,7 @@ export default function Landing() {
           <div className="grid md:grid-cols-3 gap-5">
             {[
               { text: "Got my WhatsApp OTP in literally 2 seconds. Unbelievably fast.", name: "Alex K.", role: "Developer" },
-              { text: "Clean UI, instant codes, fair pricing. My go-to for all verifications.", name: "Sam T.", role: "Product Manager" },
+              { text: "Clean UI, instant codes, seamless experience. My go-to for all verifications.", name: "Sam T.", role: "Product Manager" },
               { text: "API integration took 10 minutes. Works flawlessly at scale.", name: "Jordan M.", role: "Backend Engineer" },
             ].map((r, i) => (
               <Reveal key={r.name} delay={i * 80}>
@@ -534,8 +505,8 @@ export default function Landing() {
         <div className="l-container">
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-8 mb-10">
             <div><Logo size={26} /><p className="l-footer-desc">Virtual numbers for OTP verification & number rental worldwide.</p></div>
-            <div><p className="l-footer-heading">Product</p>{[["Receive OTP", "platforms"], ["Rent Number", "pricing"], ["API", "pricing"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
-            <div><p className="l-footer-heading">Resources</p>{[["How It Works", "how-it-works"], ["Pricing", "pricing"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
+            <div><p className="l-footer-heading">Product</p>{[["Receive OTP", "platforms"], ["Rent Number", "platforms"], ["API", "how-it-works"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
+            <div><p className="l-footer-heading">Resources</p>{[["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
             <div><p className="l-footer-heading">Legal</p>{["Privacy Policy", "Terms of Service", "Refund Policy"].map(l => <a key={l} href="#" className="l-footer-link">{l}</a>)}</div>
           </div>
           <div className="l-footer-bottom">
