@@ -302,11 +302,15 @@ export async function registerRoutes(
       const countries = await getCachedCountries();
       const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
 
+      const priceCheck = await proxnumApi.getResellPrice(service.slug, resolvedCountry);
+      if (!priceCheck.success) {
+        return res.status(503).json({ message: friendlyError(priceCheck) });
+      }
+
       const pnResult = await proxnumApi.buyVirtual(service.slug, resolvedCountry);
 
-      if (!pnResult.success || pnResult.error) {
-        const statusCode = pnResult.code === "insufficient_balance" ? 503 : 503;
-        return res.status(statusCode).json({
+      if (!pnResult.success) {
+        return res.status(503).json({
           message: friendlyError(pnResult),
         });
       }
@@ -314,13 +318,15 @@ export async function registerRoutes(
       const activation = pnResult.activation || pnResult;
       const proxnumId = String(activation.activation_id || activation.id || "");
       const phoneNumber = activation.phone || activation.number || "";
+      const amountPaid = activation.amount_paid ? String(activation.amount_paid) : null;
 
       if (!phoneNumber) {
         return res.status(503).json({ message: "No numbers available right now. Try again shortly." });
       }
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const newBalance = (balance - price).toFixed(2);
+      const chargePrice = parseFloat(service.price);
+      const newBalance = (balance - chargePrice).toFixed(2);
       await storage.updateUserBalance(user.id, newBalance);
 
       const now = new Date();
@@ -333,7 +339,7 @@ export async function registerRoutes(
         phoneNumber: formattedPhone,
         status: "pending",
         otpCode: null,
-        smsMessages: null,
+        smsMessages: amountPaid ? JSON.stringify({ proxnum_cost: amountPaid }) : null,
         price: service.price,
         country: resolvedCountry,
         proxnumId,
@@ -397,7 +403,7 @@ export async function registerRoutes(
 
       const pnResult = await proxnumApi.getVirtualStatus(order.proxnumId);
 
-      if (!pnResult.success && pnResult.error) {
+      if (!pnResult.success) {
         return res.json({ status: "pending", messages: [], otpCode: null });
       }
 
@@ -912,14 +918,20 @@ export async function registerRoutes(
       const countries = await getCachedCountries();
       const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
 
+      const priceCheck = await proxnumApi.getResellPrice(svc.slug, resolvedCountry);
+      if (!priceCheck.success) {
+        return res.status(503).json({ error: friendlyError(priceCheck) });
+      }
+
       const pnResult = await proxnumApi.buyVirtual(svc.slug, resolvedCountry);
-      if (!pnResult.success || pnResult.error) {
+      if (!pnResult.success) {
         return res.status(503).json({ error: friendlyError(pnResult) });
       }
 
       const activation = pnResult.activation || pnResult;
       const proxnumId = String(activation.activation_id || activation.id || "");
       const phoneNumber = activation.phone || activation.number || "";
+      const amountPaid = activation.amount_paid ? String(activation.amount_paid) : null;
       if (!phoneNumber) {
         return res.status(503).json({ error: "No numbers available" });
       }
@@ -933,7 +945,8 @@ export async function registerRoutes(
 
       const order = await storage.createOrder({
         userId: user.id, serviceId: svc.id, serviceName: svc.name,
-        phoneNumber: formattedPhone, status: "pending", otpCode: null, smsMessages: null,
+        phoneNumber: formattedPhone, status: "pending", otpCode: null,
+        smsMessages: amountPaid ? JSON.stringify({ proxnum_cost: amountPaid }) : null,
         price: svc.price, country: resolvedCountry, proxnumId,
         createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
       });
@@ -957,7 +970,7 @@ export async function registerRoutes(
     if ((order.status === "pending" || order.status === "waiting") && order.proxnumId) {
       try {
         const pnResult = await proxnumApi.getVirtualStatus(order.proxnumId);
-        if (pnResult.success || !pnResult.error) {
+        if (pnResult.success) {
           const apiStatus = pnResult.status || "";
           const code = pnResult.code || null;
           const activation = pnResult.activation || {};
@@ -1032,7 +1045,7 @@ export async function registerRoutes(
       const { service, country } = req.query;
       if (!service || !country) return res.status(400).json({ error: "service and country required" });
       const pnResult = await proxnumApi.getResellPrice(String(service), String(country));
-      if (!pnResult.success && pnResult.error) {
+      if (!pnResult.success) {
         return res.status(400).json({ error: friendlyError(pnResult) });
       }
       res.json(pnResult);

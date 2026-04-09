@@ -5,3 +5,4 @@ data.db
 .env
 data.db-shm
 data.db-wal
+tmp_proxnum/
