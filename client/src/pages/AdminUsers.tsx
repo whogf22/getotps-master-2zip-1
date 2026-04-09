@@ -74,6 +74,7 @@ export default function AdminUsers() {
                   <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">User</th>
                   <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Email</th>
                   <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Role</th>
+                  <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
                   <th className="text-right px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Balance</th>
                   <th className="text-right px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</th>
                 </tr>
@@ -85,13 +86,14 @@ export default function AdminUsers() {
                       <td className="px-5 py-4"><Skeleton className="h-5 w-32" /></td>
                       <td className="px-5 py-4"><Skeleton className="h-5 w-40" /></td>
                       <td className="px-5 py-4"><Skeleton className="h-5 w-16" /></td>
+                      <td className="px-5 py-4"><Skeleton className="h-5 w-16" /></td>
                       <td className="px-5 py-4"><Skeleton className="h-5 w-20 ml-auto" /></td>
                       <td className="px-5 py-4"><Skeleton className="h-8 w-24 ml-auto" /></td>
                     </tr>
                   ))
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-5 py-12 text-center">
+                    <td colSpan={6} className="px-5 py-12 text-center">
                       <Users className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
                       <p className="text-sm font-medium text-muted-foreground">No users found</p>
                     </td>
@@ -115,6 +117,12 @@ export default function AdminUsers() {
                             : "bg-muted text-muted-foreground"
                         }`}>
                           {u.role}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-500">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          Active
                         </span>
                       </td>
                       <td className="px-5 py-4 text-right">

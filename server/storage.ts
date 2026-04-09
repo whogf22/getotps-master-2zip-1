@@ -198,6 +198,8 @@ export interface IStorage {
 
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
+  deleteSetting(key: string): Promise<void>;
+  getAllSettings(): Promise<{ key: string; value: string }[]>;
 
   createTransaction(data: InsertTransaction): Promise<Transaction>;
   getUserTransactions(userId: number): Promise<Transaction[]>;
@@ -398,6 +400,15 @@ export class DatabaseStorage implements IStorage {
     } else {
       db.insert(settings).values({ key, value }).run();
     }
+  }
+
+  async deleteSetting(key: string): Promise<void> {
+    db.delete(settings).where(eq(settings.key, key)).run();
+  }
+
+  async getAllSettings(): Promise<{ key: string; value: string }[]> {
+    const rows = db.select().from(settings).all();
+    return rows.map(r => ({ key: r.key, value: r.value ?? "" }));
   }
 
   async createTransaction(data: InsertTransaction): Promise<Transaction> {

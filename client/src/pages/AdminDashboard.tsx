@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Users, ShoppingCart, DollarSign, Activity, TrendingUp, ArrowRight, Wallet,
+  Users, ShoppingCart, DollarSign, Activity, TrendingUp, ArrowRight, Wallet, Clock, UserCheck, Banknote,
 } from "lucide-react";
 
 export default function AdminDashboard() {
@@ -30,16 +30,40 @@ export default function AdminDashboard() {
       iconBg: "bg-blue-500/15 text-blue-500",
     },
     {
+      label: "Active Users (24h)",
+      value: stats?.activeUsers ?? "—",
+      icon: <UserCheck className="w-5 h-5" />,
+      iconBg: "bg-cyan-500/15 text-cyan-500",
+    },
+    {
       label: "Total Orders",
       value: stats?.totalOrders ?? "—",
       icon: <ShoppingCart className="w-5 h-5" />,
       iconBg: "bg-emerald-500/15 text-emerald-500",
     },
     {
-      label: "Revenue",
+      label: "Pending Orders",
+      value: stats?.pendingOrders ?? "—",
+      icon: <Clock className="w-5 h-5" />,
+      iconBg: "bg-orange-500/15 text-orange-500",
+    },
+    {
+      label: "Total Revenue",
       value: stats?.revenue ? `$${stats.revenue}` : "—",
       icon: <DollarSign className="w-5 h-5" />,
       iconBg: "bg-violet-500/15 text-violet-500",
+    },
+    {
+      label: "Today's Revenue",
+      value: stats?.todayRevenue ? `$${stats.todayRevenue}` : "—",
+      icon: <TrendingUp className="w-5 h-5" />,
+      iconBg: "bg-green-500/15 text-green-500",
+    },
+    {
+      label: "Total User Balances",
+      value: stats?.totalBalances ? `$${stats.totalBalances}` : "—",
+      icon: <Banknote className="w-5 h-5" />,
+      iconBg: "bg-pink-500/15 text-pink-500",
     },
     {
       label: "Proxnum Balance",
@@ -64,7 +88,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {kpis.map((kpi) => (
             <div
               key={kpi.label}

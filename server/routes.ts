@@ -841,8 +841,24 @@ export async function registerRoutes(
     const allOrders = await storage.getAllOrders();
     const allRentals = await storage.getAllRentals();
     const completedOrders = allOrders.filter(o => o.status === "completed" || o.status === "received");
+    const pendingOrders = allOrders.filter(o => o.status === "pending" || o.status === "waiting");
     const revenue = completedOrders.reduce((sum, o) => sum + parseFloat(o.price), 0)
       + allRentals.filter(r => r.status !== "cancelled").reduce((sum, r) => sum + parseFloat(r.price), 0);
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayOrders = allOrders.filter(o =>
+      (o.status === "completed" || o.status === "received") &&
+      new Date(o.createdAt) >= todayStart
+    );
+    const todayRevenue = todayOrders.reduce((sum, o) => sum + parseFloat(o.price), 0);
+
+    const totalBalances = allUsers.reduce((sum, u) => sum + parseFloat(u.balance), 0);
+
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const activeUsers = allUsers.filter(u =>
+      allOrders.some(o => o.userId === u.id && new Date(o.createdAt) >= oneDayAgo)
+    ).length;
 
     let proxnumBalance = "N/A";
     try {
@@ -853,10 +869,14 @@ export async function registerRoutes(
 
     res.json({
       totalUsers: allUsers.length,
+      activeUsers,
       totalOrders: allOrders.length,
+      pendingOrders: pendingOrders.length,
       totalRentals: allRentals.length,
       completedOrders: completedOrders.length,
       revenue: revenue.toFixed(2),
+      todayRevenue: todayRevenue.toFixed(2),
+      totalBalances: totalBalances.toFixed(2),
       proxnumBalance,
     });
   });
@@ -871,14 +891,34 @@ export async function registerRoutes(
   app.get("/api/admin/settings", requireAdmin, async (_req, res) => {
     const multiplier = await storage.getSetting("price_multiplier");
     const defaultCountry = await storage.getSetting("default_country");
-    res.json({ price_multiplier: multiplier || "1.5", default_country: defaultCountry || "us" });
+    const allSettings = await storage.getAllSettings();
+    const serviceMultipliers: Record<string, string> = {};
+    for (const s of allSettings) {
+      if (s.key.startsWith("multiplier_")) {
+        serviceMultipliers[s.key.replace("multiplier_", "")] = s.value;
+      }
+    }
+    res.json({
+      price_multiplier: multiplier || "1.5",
+      default_country: defaultCountry || "us",
+      service_multipliers: serviceMultipliers,
+    });
   });
 
   app.put("/api/admin/settings", requireAdmin, async (req, res) => {
     try {
-      const { price_multiplier, default_country } = req.body;
+      const { price_multiplier, default_country, service_multipliers } = req.body;
       if (price_multiplier !== undefined) await storage.setSetting("price_multiplier", String(price_multiplier));
       if (default_country !== undefined) await storage.setSetting("default_country", String(default_country));
+      if (service_multipliers && typeof service_multipliers === "object") {
+        for (const [slug, val] of Object.entries(service_multipliers)) {
+          if (val === null || val === "" || val === "0") {
+            await storage.deleteSetting(`multiplier_${slug}`);
+          } else {
+            await storage.setSetting(`multiplier_${slug}`, String(val));
+          }
+        }
+      }
       res.json({ message: "Settings updated" });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
