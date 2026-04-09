@@ -7,16 +7,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Settings, Save, RotateCcw, Plus, X, Search, Sliders } from "lucide-react";
+import type { AdminSettings as AdminSettingsType, ServiceItem } from "@/types/admin";
 
 export default function AdminSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: settings, isLoading } = useQuery<any>({
+  const { data: settings, isLoading } = useQuery<AdminSettingsType>({
     queryKey: ["/api/admin/settings"],
   });
 
-  const { data: services } = useQuery<any[]>({
+  const { data: services } = useQuery<ServiceItem[]>({
     queryKey: ["/api/services"],
   });
 
@@ -36,7 +37,7 @@ export default function AdminSettings() {
   }, [settings]);
 
   const saveMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Partial<AdminSettingsType>) => {
       const res = await apiRequest("PUT", "/api/admin/settings", data);
       return res.json();
     },
@@ -44,7 +45,7 @@ export default function AdminSettings() {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/settings"] });
       toast({ title: "Settings saved", description: "Platform settings have been updated." });
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast({ title: "Error", description: err.message || "Failed to save settings", variant: "destructive" });
     },
   });
@@ -88,7 +89,7 @@ export default function AdminSettings() {
 
   const activeMultipliers = Object.entries(svcMultipliers).filter(([, v]) => v && v !== "0" && v !== "");
 
-  const filteredServices = services?.filter((s: any) =>
+  const filteredServices = services?.filter((s) =>
     s.name.toLowerCase().includes(svcSearch.toLowerCase()) ||
     s.slug.toLowerCase().includes(svcSearch.toLowerCase())
   ).slice(0, 8) || [];
@@ -167,7 +168,7 @@ export default function AdminSettings() {
             {activeMultipliers.length > 0 && (
               <div className="space-y-2">
                 {activeMultipliers.map(([slug, val]) => {
-                  const svc = services?.find((s: any) => s.slug === slug);
+                  const svc = services?.find((s) => s.slug === slug);
                   return (
                     <div key={slug} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-border bg-muted/20">
                       <div className="flex-1">
@@ -208,7 +209,7 @@ export default function AdminSettings() {
               </div>
               {svcSearch && filteredServices.length > 0 && (
                 <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
-                  {filteredServices.map((s: any) => (
+                  {filteredServices.map((s) => (
                     <button
                       key={s.slug}
                       className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/50 text-sm flex items-center justify-between transition-colors"

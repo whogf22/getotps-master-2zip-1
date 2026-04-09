@@ -3,19 +3,20 @@ import { Link } from "wouter";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Users, ShoppingCart, DollarSign, Activity, TrendingUp, ArrowRight, Wallet, Clock, UserCheck, Banknote,
+  Users, ShoppingCart, DollarSign, TrendingUp, ArrowRight, Wallet, Clock, UserCheck, Banknote,
 } from "lucide-react";
+import type { AdminStats, AdminUser, AdminTransaction } from "@/types/admin";
 
 export default function AdminDashboard() {
-  const { data: stats, isLoading: statsLoading } = useQuery<any>({
+  const { data: stats, isLoading: statsLoading } = useQuery<AdminStats>({
     queryKey: ["/api/admin/stats"],
   });
 
-  const { data: users } = useQuery<any[]>({
+  const { data: users } = useQuery<AdminUser[]>({
     queryKey: ["/api/admin/users"],
   });
 
-  const { data: transactions } = useQuery<any[]>({
+  const { data: transactions } = useQuery<AdminTransaction[]>({
     queryKey: ["/api/admin/transactions"],
   });
 
@@ -129,7 +130,7 @@ export default function AdminDashboard() {
                 <p className="text-sm text-muted-foreground text-center py-8">No users yet</p>
               ) : (
                 <div className="space-y-2">
-                  {recentUsers.map((u: any) => (
+                  {recentUsers.map((u) => (
                     <div key={u.id} className="flex items-center justify-between px-4 py-3 rounded-xl border border-border hover:bg-muted/30 transition-all">
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
@@ -165,7 +166,7 @@ export default function AdminDashboard() {
                 <p className="text-sm text-muted-foreground text-center py-8">No transactions yet</p>
               ) : (
                 <div className="space-y-2">
-                  {recentTxns.map((t: any) => (
+                  {recentTxns.map((t) => (
                     <div key={t.id} className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-border hover:bg-muted/30 transition-all">
                       <div>
                         <p className="text-xs font-semibold">{t.description}</p>

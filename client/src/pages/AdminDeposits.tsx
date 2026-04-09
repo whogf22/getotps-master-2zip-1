@@ -5,12 +5,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Wallet, Check, X, Clock, AlertCircle } from "lucide-react";
+import type { AdminDeposit } from "@/types/admin";
 
 export default function AdminDeposits() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: deposits, isLoading } = useQuery<any[]>({
+  const { data: deposits, isLoading } = useQuery<AdminDeposit[]>({
     queryKey: ["/api/admin/crypto/pending"],
   });
 
@@ -25,7 +26,7 @@ export default function AdminDeposits() {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       toast({ title: "Deposit confirmed", description: "Balance has been credited to the user." });
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast({ title: "Error", description: err.message || "Failed to confirm", variant: "destructive" });
     },
   });
@@ -39,7 +40,7 @@ export default function AdminDeposits() {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/crypto/pending"] });
       toast({ title: "Deposit rejected" });
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast({ title: "Error", description: err.message || "Failed to reject", variant: "destructive" });
     },
   });
@@ -67,7 +68,7 @@ export default function AdminDeposits() {
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {deposits.map((d: any) => (
+              {deposits.map((d) => (
                 <div key={d.id} className="p-5 hover:bg-muted/20 transition-colors">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-start gap-4">

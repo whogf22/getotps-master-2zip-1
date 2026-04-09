@@ -7,16 +7,30 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Users, Search, Plus, X, DollarSign } from "lucide-react";
+import type { AdminUser } from "@/types/admin";
+
+function getUserStatus(user: AdminUser): { label: string; cls: string; dotCls: string } {
+  if (!user.orderCount || user.orderCount === 0) {
+    return { label: "New", cls: "bg-blue-500/15 text-blue-500", dotCls: "bg-blue-500" };
+  }
+  if (user.lastOrderAt) {
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    if (new Date(user.lastOrderAt).getTime() >= sevenDaysAgo) {
+      return { label: "Active", cls: "bg-emerald-500/15 text-emerald-500", dotCls: "bg-emerald-500" };
+    }
+  }
+  return { label: "Inactive", cls: "bg-gray-500/15 text-gray-400", dotCls: "bg-gray-400" };
+}
 
 export default function AdminUsers() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [balanceModal, setBalanceModal] = useState<any>(null);
+  const [balanceModal, setBalanceModal] = useState<AdminUser | null>(null);
   const [balanceAmount, setBalanceAmount] = useState("");
   const [balanceDesc, setBalanceDesc] = useState("");
 
-  const { data: users, isLoading } = useQuery<any[]>({
+  const { data: users, isLoading } = useQuery<AdminUser[]>({
     queryKey: ["/api/admin/users"],
   });
 
@@ -33,12 +47,12 @@ export default function AdminUsers() {
       setBalanceDesc("");
       toast({ title: "Balance updated", description: "User balance has been credited." });
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast({ title: "Error", description: err.message || "Failed to add balance", variant: "destructive" });
     },
   });
 
-  const filtered = users?.filter((u: any) =>
+  const filtered = users?.filter((u) =>
     u.username?.toLowerCase().includes(search.toLowerCase()) ||
     u.email?.toLowerCase().includes(search.toLowerCase())
   ) || [];
@@ -99,47 +113,50 @@ export default function AdminUsers() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((u: any) => (
-                    <tr key={u.id} className="border-b border-border hover:bg-muted/20 transition-colors">
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
-                            {u.username?.slice(0, 2).toUpperCase()}
+                  filtered.map((u) => {
+                    const status = getUserStatus(u);
+                    return (
+                      <tr key={u.id} className="border-b border-border hover:bg-muted/20 transition-colors">
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
+                              {u.username?.slice(0, 2).toUpperCase()}
+                            </div>
+                            <span className="text-sm font-semibold">{u.username}</span>
                           </div>
-                          <span className="text-sm font-semibold">{u.username}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 text-sm text-muted-foreground">{u.email}</td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          u.role === "admin"
-                            ? "bg-amber-500/15 text-amber-500 border border-amber-500/20"
-                            : "bg-muted text-muted-foreground"
-                        }`}>
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-500">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          Active
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <span className="text-sm font-bold text-primary tabular-nums">${u.balance}</span>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 text-xs rounded-lg gap-1.5"
-                          onClick={() => setBalanceModal(u)}
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add Balance
-                        </Button>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="px-5 py-4 text-sm text-muted-foreground">{u.email}</td>
+                        <td className="px-5 py-4">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            u.role === "admin"
+                              ? "bg-amber-500/15 text-amber-500 border border-amber-500/20"
+                              : "bg-muted text-muted-foreground"
+                          }`}>
+                            {u.role}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${status.cls}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${status.dotCls}`} />
+                            {status.label}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <span className="text-sm font-bold text-primary tabular-nums">${u.balance}</span>
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-xs rounded-lg gap-1.5"
+                            onClick={() => setBalanceModal(u)}
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add Balance
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

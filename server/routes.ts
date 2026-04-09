@@ -836,7 +836,18 @@ export async function registerRoutes(
 
   app.get("/api/admin/users", requireAdmin, async (_req, res) => {
     const allUsers = await storage.getAllUsers();
-    res.json(allUsers.map(({ password: _, ...u }) => u));
+    const allOrders = await storage.getAllOrders();
+    res.json(allUsers.map(({ password: _, ...u }) => {
+      const userOrders = allOrders.filter(o => o.userId === u.id);
+      const lastOrder = userOrders.length > 0
+        ? userOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+        : null;
+      return {
+        ...u,
+        orderCount: userOrders.length,
+        lastOrderAt: lastOrder?.createdAt || null,
+      };
+    }));
   });
 
   app.get("/api/admin/stats", requireAdmin, async (_req, res) => {
