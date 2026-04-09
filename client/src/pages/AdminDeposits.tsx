@@ -98,7 +98,7 @@ export default function AdminDeposits() {
                         <div className="flex items-center gap-4 text-xs">
                           <span className="font-semibold text-primary text-base">${d.amount}</span>
                           <span className="text-muted-foreground">{d.currency?.toUpperCase()}</span>
-                          <span className="text-muted-foreground">{d.network}</span>
+                          {d.cryptoAmount && <span className="text-muted-foreground">{d.cryptoAmount} {d.currency}</span>}
                         </div>
                         {d.txHash && (
                           <p className="text-xs font-mono text-muted-foreground break-all">

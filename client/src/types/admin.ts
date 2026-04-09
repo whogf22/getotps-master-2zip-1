@@ -40,7 +40,7 @@ export interface AdminDeposit {
   userId: number;
   amount: string;
   currency: string;
-  network: string;
+  cryptoAmount: string | null;
   walletAddress: string;
   txHash: string | null;
   status: string;
