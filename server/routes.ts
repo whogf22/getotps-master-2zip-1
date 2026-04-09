@@ -34,8 +34,11 @@ async function getMarkupMultiplier(): Promise<number> {
 }
 
 async function getServiceMultiplier(service: string, country: string): Promise<number> {
-  const val = await storage.getSetting(`multiplier_${service}_${country}`);
-  return val ? parseFloat(val) : 1.0;
+  const specific = await storage.getSetting(`multiplier_${service}_${country}`);
+  if (specific) return parseFloat(specific);
+  const general = await storage.getSetting(`multiplier_${service}`);
+  if (general) return parseFloat(general);
+  return 1.0;
 }
 
 async function calculatePrice(basePrice: number, service: string, country: string): Promise<number> {
@@ -895,7 +898,8 @@ export async function registerRoutes(
     const serviceMultipliers: Record<string, string> = {};
     for (const s of allSettings) {
       if (s.key.startsWith("multiplier_")) {
-        serviceMultipliers[s.key.replace("multiplier_", "")] = s.value;
+        const rest = s.key.replace("multiplier_", "");
+        serviceMultipliers[rest] = s.value;
       }
     }
     res.json({
