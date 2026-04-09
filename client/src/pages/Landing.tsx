@@ -6,13 +6,60 @@ import { Button } from "@/components/ui/button";
 import { HeroScene } from "@/components/3d/HeroScene";
 import { PhoneMockup } from "@/components/3d/PhoneMockup";
 import { SceneErrorBoundary } from "@/components/3d/SceneErrorBoundary";
-import { LiveOTPFeed, LiveActivityBar } from "@/components/3d/LiveOTPFeed";
+import { LiveOTPTicker, NetworkStats } from "@/components/3d/LiveOTPFeed";
 import {
   Zap, Shield, Globe, ArrowRight, Star, Lock,
   ChevronDown, CheckCircle, Cpu, Key, RefreshCw,
-  BarChart3, Wifi, Server, Sparkles, Eye, Clock
+  BarChart3, Wifi, Server, Sparkles, Eye
 } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+
+function useReveal() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [v, setV] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const o = new IntersectionObserver(([e]) => { if (e.isIntersecting) setV(true); }, { threshold: 0.1 });
+    o.observe(el);
+    return () => o.disconnect();
+  }, []);
+  return { ref, v };
+}
+
+function Reveal({ children, className = "", delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
+  const { ref, v } = useReveal();
+  return (
+    <div ref={ref} className={`reveal ${v ? "revealed" : ""} ${className}`} style={{ transitionDelay: `${delay}ms` }}>
+      {children}
+    </div>
+  );
+}
+
+function GlowCard({ children, className = "", glowColor = "cyan" }: { children: React.ReactNode; className?: string; glowColor?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x: 50, y: 50 });
+
+  const handleMove = useCallback((e: React.MouseEvent) => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    setPos({ x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 });
+  }, []);
+
+  const gradColor = glowColor === "violet" ? "rgba(139,92,246,0.12)" : glowColor === "green" ? "rgba(34,197,94,0.1)" : "rgba(14,165,233,0.12)";
+
+  return (
+    <div
+      ref={ref}
+      className={`glow-card ${className}`}
+      onMouseMove={handleMove}
+      style={{ "--glow-x": `${pos.x}%`, "--glow-y": `${pos.y}%`, "--glow-color": gradColor } as React.CSSProperties}
+    >
+      <div className="glow-card-highlight" />
+      {children}
+    </div>
+  );
+}
 
 const PLATFORMS = [
   { name: "WhatsApp", emoji: "💬", price: "1.92", color: "#25d366", hot: true },
@@ -42,15 +89,6 @@ const COUNTRIES = [
   { flag: "🇫🇷", name: "France", code: "+33", stock: 60 },
 ];
 
-const TRUST = [
-  { icon: <Zap className="w-5 h-5 text-yellow-400" />, bg: "bg-yellow-400/10", title: "< 5 Second Delivery", desc: "OTP codes reach your dashboard nearly instantly after the service sends them." },
-  { icon: <Shield className="w-5 h-5 text-cyan-400" />, bg: "bg-cyan-400/10", title: "100% Anonymous", desc: "Your real phone number is never stored, shared, or exposed. Total privacy." },
-  { icon: <RefreshCw className="w-5 h-5 text-emerald-400" />, bg: "bg-emerald-400/10", title: "Full Refund Guarantee", desc: "No SMS arrives? Your balance is instantly returned. No questions." },
-  { icon: <Globe className="w-5 h-5 text-violet-400" />, bg: "bg-violet-400/10", title: "50+ Countries", desc: "Global pool of virtual numbers across every major market worldwide." },
-  { icon: <Cpu className="w-5 h-5 text-orange-400" />, bg: "bg-orange-400/10", title: "REST API Access", desc: "Every account gets a free API key. Automate at scale." },
-  { icon: <Lock className="w-5 h-5 text-pink-400" />, bg: "bg-pink-400/10", title: "Secure Wallet", desc: "Prepaid balance. No subscriptions, no surprise fees. You control spending." },
-];
-
 const FAQS = [
   { q: "What is GetOTPs?", a: "GetOTPs is a virtual phone number platform that lets you rent temporary numbers to receive SMS verification codes for 500+ apps without using your real number." },
   { q: "What's the difference between Receive OTP and Rent Number?", a: "Receive OTP gives you a 20-minute window for a single verification code. Rent Number gives you longer-term control to receive multiple SMS from any app." },
@@ -60,126 +98,86 @@ const FAQS = [
   { q: "Which services are supported?", a: "We support 500+ services including WhatsApp, Telegram, Google, TikTok, Binance, Discord, Facebook, Instagram, and many more." },
 ];
 
-const PRICING = [
-  {
-    name: "Receive OTP", tagline: "One-time verification",
-    price: "From $0.15", period: "per code", icon: <Key className="w-5 h-5" />,
-    features: ["20-min number window", "Full refund if no SMS", "500+ supported services", "Instant code delivery", "No subscription"],
-  },
-  {
-    name: "Rent a Number", tagline: "Extended rental", popular: true,
-    price: "From $0.50", period: "per rental", icon: <Server className="w-5 h-5" />,
-    features: ["Keep the number longer", "Receive multiple SMS", "Full number control", "Works across all apps", "Extended options"],
-  },
-  {
-    name: "API / Bulk", tagline: "Developer access",
-    price: "Custom", period: "volume pricing", icon: <BarChart3 className="w-5 h-5" />,
-    features: ["REST API included", "Bulk ordering", "Webhook callbacks", "Reseller dashboard", "Priority support"],
-  },
-];
-
-function useScrollReveal() {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setVisible(true); }, { threshold: 0.12 });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-  return { ref, visible };
-}
-
-function RevealSection({ children, className = "", delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
-  const { ref, visible } = useScrollReveal();
-  return (
-    <div ref={ref} className={`reveal-section ${visible ? "revealed" : ""} ${className}`} style={{ transitionDelay: `${delay}ms` }}>
-      {children}
-    </div>
-  );
-}
-
-function DashboardPreview() {
+function DashboardPanel() {
   const [tab, setTab] = useState(0);
-  const tabs = ["OTP Inbox", "Active Rentals", "History"];
   const [tick, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 3000); return () => clearInterval(t); }, []);
+  const tabs = ["OTP Inbox", "Rentals", "History"];
 
   return (
-    <div className="dashboard-preview">
-      <div className="dp-header">
-        <div className="dp-logo"><div className="dp-logo-dot" /><span>GetOTPs</span><span className="dp-badge">Pro</span></div>
-        <div className="dp-balance"><span className="dp-balance-label">Balance</span><span className="dp-balance-amount">$24.80</span></div>
+    <div className="dash-panel">
+      <div className="dash-chrome">
+        <div className="dash-dots"><span /><span /><span /></div>
+        <div className="dash-url">getotps.com/dashboard</div>
       </div>
-      <div className="dp-tabs">
+      <div className="dash-header">
+        <div className="dash-logo"><div className="dash-logo-dot" /><span>GetOTPs</span><span className="dash-pro">Pro</span></div>
+        <div className="dash-bal"><span className="dash-bal-l">Wallet</span><span className="dash-bal-v">$24.80</span></div>
+      </div>
+      <div className="dash-tabs">
         {tabs.map((t, i) => (
-          <button key={t} className={`dp-tab ${tab === i ? "dp-tab-active" : ""}`} onClick={() => setTab(i)}>
-            {t}{i === 0 && <span className="dp-tab-dot" />}
+          <button key={t} className={`dash-tab ${tab === i ? "dash-tab-on" : ""}`} onClick={() => setTab(i)}>
+            {t}{i === 0 && <span className="dash-tab-live" />}
           </button>
         ))}
       </div>
-      <div className="dp-content">
+      <div className="dash-body">
         {tab === 0 && (
-          <div className="dp-list">
+          <>
             {[
               { svc: "WhatsApp", code: "847 291", time: "2s ago", st: "received", cl: "#25d366" },
               { svc: "Telegram", code: "563 018", time: "1m ago", st: "received", cl: "#0088cc" },
               { svc: "Google", code: "391 752", time: "3m ago", st: "received", cl: "#4285f4" },
             ].map((r, i) => (
-              <div key={i} className="dp-item">
-                <div className="dp-item-service" style={{ color: r.cl }}>{r.svc}</div>
-                <div className="dp-item-code">{r.code}</div>
-                <div className="dp-item-meta"><span className="dp-item-time">{r.time}</span><span className="dp-item-status dp-status-ok">{r.st}</span></div>
+              <div key={i} className="dash-row">
+                <span className="dash-row-svc" style={{ color: r.cl }}>{r.svc}</span>
+                <span className="dash-row-code">{r.code}</span>
+                <span className="dash-row-time">{r.time}</span>
+                <span className="dash-row-st dash-st-ok">{r.st}</span>
               </div>
             ))}
             {tick % 2 === 0 && (
-              <div className="dp-item dp-item-live">
-                <div className="dp-item-service" style={{ color: "#f3ba2f" }}>Binance</div>
-                <div className="dp-item-code"><span className="dp-code-blink">●</span> Waiting…</div>
-                <div className="dp-item-meta"><span className="dp-item-time">now</span><span className="dp-item-status dp-status-wait">pending</span></div>
+              <div className="dash-row dash-row-live">
+                <span className="dash-row-svc" style={{ color: "#f3ba2f" }}>Binance</span>
+                <span className="dash-row-code"><span className="dash-blink">●</span> Waiting…</span>
+                <span className="dash-row-time">now</span>
+                <span className="dash-row-st dash-st-wait">pending</span>
               </div>
             )}
-          </div>
+          </>
         )}
         {tab === 1 && (
-          <div className="dp-list">
+          <>
             {[
-              { num: "+1 (555) 832-4910", svc: "WhatsApp", exp: "18:42", active: true },
-              { num: "+1 (555) 217-0381", svc: "Binance", exp: "04:12", active: true },
-              { num: "+44 7911 123456", svc: "Telegram", exp: "Expired", active: false },
+              { num: "+1 (555) 832-4910", svc: "WhatsApp", exp: "18:42", on: true },
+              { num: "+1 (555) 217-0381", svc: "Binance", exp: "04:12", on: true },
+              { num: "+44 7911 123456", svc: "Telegram", exp: "Expired", on: false },
             ].map((r, i) => (
-              <div key={i} className={`dp-item ${!r.active ? "dp-item-expired" : ""}`}>
-                <div className="dp-item-number">{r.num}</div>
-                <div className="dp-item-service" style={{ color: "#22d3ee" }}>{r.svc}</div>
-                <div className="dp-item-meta">
-                  <span className={r.active ? "text-emerald-400 text-[10px]" : "text-white/30 text-[10px]"}>{r.active ? `⏱ ${r.exp}` : r.exp}</span>
-                  <span className={`dp-item-status ${r.active ? "dp-status-ok" : "dp-status-exp"}`}>{r.active ? "active" : "expired"}</span>
-                </div>
+              <div key={i} className={`dash-row ${!r.on ? "dash-row-dim" : ""}`}>
+                <span className="dash-row-num">{r.num}</span>
+                <span className="dash-row-svc" style={{ color: "#22d3ee", fontSize: "10px" }}>{r.svc}</span>
+                <span className={`dash-row-time ${r.on ? "text-emerald-400" : ""}`}>{r.on ? `⏱ ${r.exp}` : r.exp}</span>
+                <span className={`dash-row-st ${r.on ? "dash-st-ok" : "dash-st-exp"}`}>{r.on ? "active" : "expired"}</span>
               </div>
             ))}
-          </div>
+          </>
         )}
         {tab === 2 && (
-          <div className="dp-list">
+          <>
             {[
               { svc: "WhatsApp", type: "OTP", amt: "-$1.92", time: "14:22" },
               { svc: "Telegram", type: "Rental", amt: "-$0.50", time: "13:08" },
-              { svc: "Google", type: "OTP", amt: "-$0.45", time: "Yesterday" },
-              { svc: "TikTok", type: "Refund", amt: "+$0.33", time: "Yesterday" },
+              { svc: "TikTok", type: "Refund", amt: "+$0.33", time: "12:05" },
             ].map((r, i) => (
-              <div key={i} className="dp-item">
-                <div className="dp-item-service" style={{ color: "#22d3ee" }}>{r.svc}</div>
-                <div className="dp-item-code" style={{ fontSize: "11px", opacity: 0.6 }}>{r.type}</div>
-                <div className="dp-item-meta"><span className="dp-item-time">{r.time}</span><span className={r.amt.startsWith("+") ? "dp-item-credit" : "dp-item-debit"}>{r.amt}</span></div>
+              <div key={i} className="dash-row">
+                <span className="dash-row-svc" style={{ color: "#22d3ee" }}>{r.svc}</span>
+                <span className="dash-row-code" style={{ fontSize: "10px", opacity: 0.5 }}>{r.type}</span>
+                <span className="dash-row-time">{r.time}</span>
+                <span className={r.amt.startsWith("+") ? "text-emerald-400 text-[11px] font-bold" : "text-red-400/60 text-[11px] font-bold"}>{r.amt}</span>
               </div>
             ))}
-          </div>
+          </>
         )}
-      </div>
-      <div className="dp-footer">
-        <button className="dp-action-btn">+ New OTP</button>
-        <button className="dp-action-btn dp-action-secondary">Rent Number</button>
       </div>
     </div>
   );
@@ -189,438 +187,358 @@ export default function Landing() {
   const { user } = useAuth();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [scrolled, setScrolled] = useState(false);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [mx, setMx] = useState(0);
+  const [my, setMy] = useState(0);
 
   useEffect(() => {
-    const fn = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", fn);
+    const fn = () => setScrolled(window.scrollY > 30);
+    window.addEventListener("scroll", fn, { passive: true });
     return () => window.removeEventListener("scroll", fn);
   }, []);
 
   useEffect(() => {
     const fn = (e: MouseEvent) => {
-      setMousePos({ x: (e.clientX / window.innerWidth - 0.5) * 2, y: (e.clientY / window.innerHeight - 0.5) * 2 });
+      setMx((e.clientX / window.innerWidth - 0.5) * 2);
+      setMy((e.clientY / window.innerHeight - 0.5) * 2);
     };
-    window.addEventListener("mousemove", fn);
+    window.addEventListener("mousemove", fn, { passive: true });
     return () => window.removeEventListener("mousemove", fn);
   }, []);
 
-  const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   const { data: services } = useQuery<any[]>({ queryKey: ["/api/services"] });
-  const displayPlatforms = services?.length ? services.slice(0, 16) : PLATFORMS;
+  const plats = services?.length ? services.slice(0, 16) : PLATFORMS;
 
   return (
-    <div className="min-h-screen bg-[#030810] text-white overflow-x-hidden">
+    <div className="landing">
 
-      {/* ─── NAVBAR ─── */}
-      <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${scrolled ? "nav-scrolled" : "bg-transparent"}`}>
-        <div className="max-w-7xl mx-auto px-5 h-[72px] flex items-center justify-between">
-          <Logo size={32} />
-          <nav className="hidden md:flex items-center gap-8 text-[13px] font-medium">
+      {/* ════════ NAV ════════ */}
+      <header className={`l-nav ${scrolled ? "l-nav-solid" : ""}`}>
+        <div className="l-nav-inner">
+          <Logo size={30} />
+          <nav className="l-nav-links">
             {[["Services", "platforms"], ["How It Works", "how-it-works"], ["Pricing", "pricing"], ["FAQ", "faq"]].map(([label, id]) => (
-              <button key={id} onClick={() => scrollTo(id)} className="text-white/40 hover:text-white transition-colors duration-300">{label}</button>
+              <button key={id} onClick={() => go(id)} className="l-nav-link">{label}</button>
             ))}
           </nav>
-          <div className="flex items-center gap-2">
+          <div className="l-nav-actions">
             {user ? (
-              <Link href="/dashboard">
-                <Button size="sm" className="rounded-xl font-semibold bg-primary hover:bg-primary/90 gap-1.5">Dashboard <ArrowRight className="w-3.5 h-3.5" /></Button>
-              </Link>
+              <Link href="/dashboard"><Button size="sm" className="l-cta-btn">Dashboard <ArrowRight className="w-3.5 h-3.5" /></Button></Link>
             ) : (
               <>
-                <Link href="/login"><Button variant="ghost" size="sm" className="rounded-xl font-medium text-white/50 hover:text-white hover:bg-white/6">Sign In</Button></Link>
-                <Link href="/register"><button className="nav-cta-btn">Get Started Free</button></Link>
+                <Link href="/login"><button className="l-nav-link">Sign In</button></Link>
+                <Link href="/register"><button className="l-cta-btn">Get Started Free</button></Link>
               </>
             )}
           </div>
         </div>
       </header>
 
-      {/* ─── HERO — Immersive 3D environment ─── */}
-      <section className="relative min-h-screen flex flex-col justify-center pt-[72px] overflow-hidden">
-        {/* 3D canvas */}
+      {/* ════════ HERO — Full immersive ════════ */}
+      <section className="l-hero">
         <SceneErrorBoundary fallback={<div className="absolute inset-0 hero-fallback-bg" />}>
           <HeroScene />
         </SceneErrorBoundary>
 
-        {/* Cinematic gradients */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#030810]/50 via-transparent to-[#030810] pointer-events-none z-[1]" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#030810]/90 via-[#030810]/30 to-transparent pointer-events-none z-[1]" />
-        <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-[#030810] to-transparent pointer-events-none z-[1]" />
+        <div className="l-hero-gradient-l" />
+        <div className="l-hero-gradient-b" />
+        <div className="l-hero-vignette" />
 
-        {/* Hero content — asymmetric, dramatic */}
-        <div className="relative z-10 w-full max-w-7xl mx-auto px-5 flex-1 flex items-center">
-          <div className="grid lg:grid-cols-[1.15fr_0.85fr] gap-8 w-full items-center">
-            {/* Left column: copy */}
-            <div className="max-w-2xl" style={{ transform: `translate(${mousePos.x * -3}px, ${mousePos.y * -2}px)`, transition: "transform 0.3s ease-out" }}>
-              <div className="hero-badge mb-7">
-                <span className="hero-badge-dot" />
-                <span>Live Infrastructure · 50+ Countries · 500+ Services</span>
-              </div>
-
-              <h1 className="text-[clamp(40px,6vw,76px)] font-black tracking-[-0.03em] leading-[1.02] mb-6">
-                <span className="text-white">Receive OTPs.</span><br />
-                <span className="hero-gradient-text">Rent Numbers.</span><br />
-                <span className="text-white/70">Activate Instantly.</span>
-              </h1>
-
-              <p className="text-[17px] text-white/40 max-w-lg mb-10 leading-[1.7]">
-                Instant virtual phone numbers for SMS verification on every platform.
-                <span className="text-white/75 font-semibold"> No real number exposed. No data stored. Codes in under 5 seconds.</span>
-              </p>
-
-              <div className="flex flex-col sm:flex-row gap-3 mb-8">
-                <Link href="/register"><button className="hero-cta-primary">Get Number Now <ArrowRight className="w-5 h-5" /></button></Link>
-                <button className="hero-cta-secondary" onClick={() => scrollTo("platforms")}>View Services</button>
-              </div>
-
-              <div className="flex flex-wrap gap-2.5">
-                {[
-                  { icon: <Zap className="w-3.5 h-3.5 text-yellow-400" />, t: "< 5s delivery" },
-                  { icon: <Shield className="w-3.5 h-3.5 text-cyan-400" />, t: "100% anonymous" },
-                  { icon: <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />, t: "Refund guarantee" },
-                  { icon: <Wifi className="w-3.5 h-3.5 text-violet-400" />, t: "99.9% uptime" },
-                ].map(p => <div key={p.t} className="trust-pill">{p.icon}<span>{p.t}</span></div>)}
-              </div>
+        <div className="l-hero-content">
+          <div className="l-hero-left" style={{ transform: `translate(${mx * -4}px, ${my * -3}px)` }}>
+            <div className="l-badge">
+              <span className="l-badge-dot" />
+              Live Network · 50+ Countries · 500+ Services
             </div>
 
-            {/* Right column: phone + live feed */}
-            <div className="hidden lg:block relative" style={{ transform: `translate(${mousePos.x * 5}px, ${mousePos.y * 3}px)`, transition: "transform 0.4s ease-out" }}>
-              <div className="relative flex items-center justify-center">
-                {/* Depth glow layers */}
-                <div className="absolute inset-0 -m-12 bg-gradient-to-br from-cyan-500/8 via-transparent to-violet-500/5 rounded-[40px] blur-3xl" />
+            <h1 className="l-hero-h1">
+              <span className="l-h1-line">Receive OTPs.</span>
+              <span className="l-h1-gradient">Rent Numbers.</span>
+              <span className="l-h1-dim">Activate Instantly.</span>
+            </h1>
 
-                <PhoneMockup />
+            <p className="l-hero-sub">
+              Virtual phone numbers for SMS verification.
+              <strong> No real number exposed. Codes in under 5 seconds.</strong>
+            </p>
 
-                {/* Floating hero cards */}
-                <div className="absolute top-4 -left-16 hero-float-card z-20" style={{ animationDelay: "0s" }}>
-                  <span>💬</span>
-                  <div>
-                    <div className="text-[11px] font-bold text-white">WhatsApp OTP</div>
-                    <div className="text-[10px] text-emerald-400">Delivered in 2s ✓</div>
-                  </div>
-                </div>
-                <div className="absolute bottom-24 -left-20 hero-float-card z-20" style={{ animationDelay: "1s" }}>
-                  <span>₿</span>
-                  <div>
-                    <div className="text-[11px] font-bold text-white">Binance</div>
-                    <div className="text-[10px] text-cyan-400">Number active ⚡</div>
-                  </div>
-                </div>
-                <div className="absolute top-20 -right-12 hero-float-card z-20" style={{ animationDelay: "2s" }}>
-                  <span>✈️</span>
-                  <div>
-                    <div className="text-[11px] font-bold text-white">Telegram</div>
-                    <div className="text-[10px] text-emerald-400">563 018 ✓</div>
-                  </div>
-                </div>
-                <div className="absolute bottom-8 -right-16 hero-float-card z-20" style={{ animationDelay: "2.8s" }}>
-                  <span>🎵</span>
-                  <div>
-                    <div className="text-[11px] font-bold text-white">TikTok</div>
-                    <div className="text-[10px] text-violet-400">$0.33 →</div>
-                  </div>
-                </div>
-              </div>
+            <div className="l-hero-ctas">
+              <Link href="/register"><button className="l-btn-primary">Get Number Now <ArrowRight className="w-5 h-5" /></button></Link>
+              <button className="l-btn-glass" onClick={() => go("platforms")}>View Services</button>
+            </div>
+
+            <div className="l-hero-pills">
+              {[
+                { icon: <Zap className="w-3.5 h-3.5" />, t: "< 5s delivery", c: "text-yellow-400" },
+                { icon: <Shield className="w-3.5 h-3.5" />, t: "100% anonymous", c: "text-cyan-400" },
+                { icon: <RefreshCw className="w-3.5 h-3.5" />, t: "Full refund", c: "text-emerald-400" },
+                { icon: <Wifi className="w-3.5 h-3.5" />, t: "99.9% uptime", c: "text-violet-400" },
+              ].map(p => <div key={p.t} className="l-pill"><span className={p.c}>{p.icon}</span>{p.t}</div>)}
+            </div>
+          </div>
+
+          <div className="l-hero-right" style={{ transform: `translate(${mx * 6}px, ${my * 4}px)` }}>
+            <div className="l-hero-phone-zone">
+              <PhoneMockup />
+              <LiveOTPTicker />
             </div>
           </div>
         </div>
 
-        {/* Scroll pulse */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10">
-          <div className="scroll-indicator" />
+        <div className="l-scroll-cue"><div className="l-scroll-dot" /></div>
+      </section>
+
+      {/* ════════ NETWORK STATS BAR ════════ */}
+      <NetworkStats />
+
+      {/* ════════ TWO SERVICES ════════ */}
+      <section className="l-section">
+        <div className="l-container grid md:grid-cols-2 gap-6">
+          <Reveal>
+            <GlowCard className="l-svc-card">
+              <div className="l-svc-glow l-svc-glow-cyan" />
+              <div className="l-svc-inner">
+                <div className="l-svc-icon-wrap l-svc-icon-cyan"><Key className="w-6 h-6" /></div>
+                <h3 className="l-svc-title">Receive OTP</h3>
+                <p className="l-svc-desc">Get a temporary number, trigger the SMS, receive the code. 20-minute window. Perfect for one-time verification.</p>
+                <div className="l-svc-price">From <strong>$0.15</strong> / code</div>
+                <Link href="/register"><button className="l-svc-btn l-svc-btn-cyan">Start Now <ArrowRight className="w-4 h-4" /></button></Link>
+              </div>
+            </GlowCard>
+          </Reveal>
+          <Reveal delay={120}>
+            <GlowCard className="l-svc-card" glowColor="violet">
+              <div className="l-svc-glow l-svc-glow-violet" />
+              <div className="l-svc-inner">
+                <div className="l-svc-icon-wrap l-svc-icon-violet"><Server className="w-6 h-6" /></div>
+                <h3 className="l-svc-title">Rent a Number</h3>
+                <p className="l-svc-desc">Full control of a virtual number for longer periods. Receive multiple SMS, hold for reuse, test integrations.</p>
+                <div className="l-svc-price l-svc-price-v">From <strong>$0.50</strong> / rental</div>
+                <Link href="/register"><button className="l-svc-btn l-svc-btn-violet">Rent Now <ArrowRight className="w-4 h-4" /></button></Link>
+              </div>
+            </GlowCard>
+          </Reveal>
         </div>
       </section>
 
-      {/* ─── LIVE ACTIVITY BAR ─── */}
-      <LiveActivityBar />
-
-      {/* ─── TWO SERVICES GLASS PANELS ─── */}
-      <section className="relative z-10 py-6 px-5">
-        <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-5">
-          <RevealSection>
-            <div className="glass-service-card gsc-otp">
-              <div className="gsc-glow gsc-glow-cyan" />
-              <div className="gsc-content">
-                <div className="gsc-icon">🔑</div>
-                <div className="gsc-body">
-                  <h3>Receive OTP</h3>
-                  <p>Get a temporary number, trigger the SMS, receive the code instantly. Perfect for one-time account verification.</p>
-                  <div className="gsc-price">From <strong>$0.15</strong> / code</div>
-                </div>
-                <Link href="/register"><button className="gsc-btn">Start Now <ArrowRight className="w-4 h-4" /></button></Link>
-              </div>
-            </div>
-          </RevealSection>
-          <RevealSection delay={100}>
-            <div className="glass-service-card gsc-rent">
-              <div className="gsc-glow gsc-glow-violet" />
-              <div className="gsc-content">
-                <div className="gsc-icon">📲</div>
-                <div className="gsc-body">
-                  <h3>Rent a Number</h3>
-                  <p>Full control of a virtual number for longer periods. Receive multiple SMS, test integrations, hold for reuse.</p>
-                  <div className="gsc-price">From <strong>$0.50</strong> / rental</div>
-                </div>
-                <Link href="/register"><button className="gsc-btn gsc-btn-violet">Rent Now <ArrowRight className="w-4 h-4" /></button></Link>
-              </div>
-            </div>
-          </RevealSection>
-        </div>
-      </section>
-
-      {/* ─── HOW IT WORKS ─── */}
-      <section id="how-it-works" className="py-28 relative">
-        <div className="section-glow-bg" />
-        <div className="max-w-6xl mx-auto px-5 relative z-2">
-          <RevealSection>
-            <div className="text-center mb-16">
-              <p className="section-eyebrow">How It Works</p>
-              <h2 className="section-title">Get Verified in Under 2 Minutes</h2>
-              <p className="section-subtitle">Four simple steps. No technical knowledge needed.</p>
-            </div>
-          </RevealSection>
-
+      {/* ════════ HOW IT WORKS ════════ */}
+      <section id="how-it-works" className="l-section l-section-glow">
+        <div className="l-container">
+          <Reveal><div className="l-section-head"><span className="l-eyebrow">How It Works</span><h2 className="l-h2">Get Verified in Under 2 Minutes</h2><p className="l-h2-sub">Four simple steps. No technical knowledge needed.</p></div></Reveal>
           <div className="grid md:grid-cols-4 gap-5 relative">
-            <div className="hidden md:block absolute top-[52px] left-[12.5%] right-[12.5%] h-px">
-              <div className="connector-line" />
-            </div>
+            <div className="l-step-line" />
             {[
-              { n: "01", icon: "🌍", title: "Choose Country", desc: "Select from 50+ countries with live number availability." },
-              { n: "02", icon: "📱", title: "Pick a Service", desc: "Search 500+ platforms — WhatsApp, Telegram, Binance & more." },
-              { n: "03", icon: "💳", title: "Get Your Number", desc: "Instant activation. Virtual number live within seconds." },
-              { n: "04", icon: "✅", title: "Receive OTP", desc: "Code arrives in your dashboard in under 5 seconds." },
-            ].map((step, i) => (
-              <RevealSection key={step.n} delay={i * 80}>
-                <div className="step-card group">
-                  <div className="step-icon-wrap">
-                    <span className="text-2xl">{step.icon}</span>
-                    <div className="step-num">{step.n}</div>
-                  </div>
-                  <h3 className="text-[15px] font-bold text-white mt-5 mb-2">{step.title}</h3>
-                  <p className="text-[13px] text-white/35 leading-relaxed">{step.desc}</p>
-                </div>
-              </RevealSection>
+              { n: "01", emoji: "🌍", title: "Choose Country", desc: "Select from 50+ countries with live number availability." },
+              { n: "02", emoji: "📱", title: "Pick a Service", desc: "Search 500+ platforms — WhatsApp, Telegram, Binance & more." },
+              { n: "03", emoji: "💳", title: "Get Your Number", desc: "Instant activation. Virtual number live within seconds." },
+              { n: "04", emoji: "✅", title: "Receive OTP", desc: "Code arrives in your dashboard in under 5 seconds." },
+            ].map((s, i) => (
+              <Reveal key={s.n} delay={i * 100}>
+                <GlowCard className="l-step">
+                  <div className="l-step-icon"><span>{s.emoji}</span><div className="l-step-num">{s.n}</div></div>
+                  <h3 className="l-step-title">{s.title}</h3>
+                  <p className="l-step-desc">{s.desc}</p>
+                </GlowCard>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ─── SUPPORTED PLATFORMS ─── */}
-      <section id="platforms" className="py-28 relative border-t border-white/5">
-        <div className="section-glow-bg" style={{ background: "radial-gradient(ellipse at 30% 50%, rgba(129,140,248,0.04), transparent 60%)" }} />
-        <div className="max-w-6xl mx-auto px-5 relative z-2">
-          <RevealSection>
-            <div className="text-center mb-16">
-              <p className="section-eyebrow">500+ Services Supported</p>
-              <h2 className="section-title">Every Platform. One Dashboard.</h2>
-              <p className="section-subtitle">From messaging apps to crypto exchanges — if it sends SMS, we cover it.</p>
-            </div>
-          </RevealSection>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-8">
-            {displayPlatforms.map((svc: any, i: number) => (
-              <RevealSection key={i} delay={i * 30}>
+      {/* ════════ PLATFORMS ════════ */}
+      <section id="platforms" className="l-section">
+        <div className="l-container">
+          <Reveal><div className="l-section-head"><span className="l-eyebrow">500+ Services</span><h2 className="l-h2">Every Platform. One Dashboard.</h2><p className="l-h2-sub">Messaging, crypto, social, delivery — if it sends SMS, we cover it.</p></div></Reveal>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-10">
+            {plats.map((svc: any, i: number) => (
+              <Reveal key={i} delay={i * 25}>
                 <Link href="/register">
-                  <div className="platform-card group">
-                    <div className="platform-icon">{svc.emoji || "📱"}</div>
-                    <div className="platform-name">{svc.name}</div>
-                    <div className="platform-price">${parseFloat(svc.price || "0.33").toFixed(2)}</div>
-                    {svc.hot && <div className="platform-hot">🔥</div>}
-                  </div>
+                  <GlowCard className="l-plat">
+                    <div className="l-plat-icon">{svc.emoji || "📱"}</div>
+                    <div className="l-plat-name">{svc.name}</div>
+                    <div className="l-plat-price">${parseFloat(svc.price || "0.33").toFixed(2)}</div>
+                    {svc.hot && <div className="l-plat-hot">🔥</div>}
+                  </GlowCard>
                 </Link>
-              </RevealSection>
+              </Reveal>
             ))}
           </div>
-          <div className="text-center"><Link href="/register"><button className="outline-btn">Browse All 500+ Services <ArrowRight className="w-4 h-4" /></button></Link></div>
+          <Reveal><div className="text-center"><Link href="/register"><button className="l-btn-outline">Browse All 500+ Services <ArrowRight className="w-4 h-4" /></button></Link></div></Reveal>
         </div>
       </section>
 
-      {/* ─── COUNTRY AVAILABILITY ─── */}
-      <section className="py-28 relative">
-        <div className="max-w-6xl mx-auto px-5">
-          <RevealSection>
-            <div className="text-center mb-16">
-              <p className="section-eyebrow">Global Coverage</p>
-              <h2 className="section-title">Numbers Available Worldwide</h2>
-              <p className="section-subtitle">Real-time inventory from 50+ countries. US numbers always in stock.</p>
-            </div>
-          </RevealSection>
+      {/* ════════ COUNTRIES ════════ */}
+      <section className="l-section l-section-glow">
+        <div className="l-container">
+          <Reveal><div className="l-section-head"><span className="l-eyebrow">Global Coverage</span><h2 className="l-h2">Numbers Available Worldwide</h2><p className="l-h2-sub">Real-time inventory from 50+ countries.</p></div></Reveal>
           <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
             {COUNTRIES.map((c, i) => (
-              <RevealSection key={c.name} delay={i * 60}>
-                <div className="country-card">
-                  <div className="country-flag">{c.flag}</div>
-                  <div className="country-info"><div className="country-name">{c.name}</div><div className="country-code">{c.code}</div></div>
-                  <div className="country-stock"><div className="stock-num">{c.stock}</div><div className="stock-label">in stock</div></div>
-                  <div className="country-live" />
-                </div>
-              </RevealSection>
+              <Reveal key={c.name} delay={i * 60}>
+                <GlowCard className="l-country">
+                  <div className="l-country-flag">{c.flag}</div>
+                  <div className="l-country-info"><div className="l-country-name">{c.name}</div><div className="l-country-code">{c.code}</div></div>
+                  <div className="l-country-stock"><div className="l-country-num">{c.stock}</div><div className="l-country-label">in stock</div></div>
+                  <div className="l-country-live" />
+                </GlowCard>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ─── DASHBOARD PREVIEW ─── */}
-      <section className="py-28 relative border-y border-white/5 overflow-hidden">
-        <div className="section-glow-bg" style={{ background: "radial-gradient(ellipse at 70% 50%, rgba(14,165,233,0.05), transparent 60%)" }} />
-        <div className="max-w-6xl mx-auto px-5 relative z-2">
-          <div className="grid lg:grid-cols-2 gap-14 items-center">
-            <RevealSection>
+      {/* ════════ DASHBOARD PREVIEW ════════ */}
+      <section className="l-section">
+        <div className="l-container">
+          <div className="grid lg:grid-cols-2 gap-16 items-center">
+            <Reveal>
               <div>
-                <p className="section-eyebrow">Live Dashboard</p>
-                <h2 className="section-title text-left">Your Control Center</h2>
-                <p className="text-[15px] text-white/35 leading-relaxed mb-8 max-w-md">
-                  Track every OTP, manage active rentals, and monitor your balance — all in one premium dashboard.
-                </p>
-                <ul className="space-y-3.5 mb-8">
-                  {["Real-time OTP inbox with live updates", "Active rental timer with countdown", "Full order history & refund tracking", "Instant Stripe balance top-up", "REST API key & webhook config"].map(t => (
-                    <li key={t} className="flex items-center gap-3 text-white/55 text-[13.5px]">
-                      <CheckCircle className="w-4 h-4 text-cyan-400 shrink-0" />{t}
-                    </li>
+                <span className="l-eyebrow">Live Dashboard</span>
+                <h2 className="l-h2 text-left">Your Control Center</h2>
+                <p className="l-h2-sub text-left mx-0 mb-8">Track every OTP, manage rentals, and monitor your balance in one premium interface.</p>
+                <ul className="l-feature-list">
+                  {["Real-time OTP inbox with live updates", "Active rental timer with countdown", "Full order history & refund tracking", "Instant balance top-up", "REST API key & webhook config"].map(f => (
+                    <li key={f}><CheckCircle className="w-4 h-4 text-cyan-400 shrink-0" />{f}</li>
                   ))}
                 </ul>
-                <Link href="/register"><button className="hero-cta-primary">Open Dashboard <ArrowRight className="w-4 h-4" /></button></Link>
+                <Link href="/register"><button className="l-btn-primary mt-2">Open Dashboard <ArrowRight className="w-4 h-4" /></button></Link>
               </div>
-            </RevealSection>
-            <RevealSection delay={150}>
-              <div className="relative">
-                <div className="absolute inset-0 -m-8 bg-gradient-to-br from-cyan-500/8 via-violet-500/4 to-transparent rounded-3xl blur-3xl" />
-                <DashboardPreview />
+            </Reveal>
+            <Reveal delay={150}>
+              <div className="l-dash-wrap">
+                <div className="l-dash-glow" />
+                <DashboardPanel />
               </div>
-            </RevealSection>
+            </Reveal>
           </div>
         </div>
       </section>
 
-      {/* ─── PRICING ─── */}
-      <section id="pricing" className="py-28 relative">
-        <div className="max-w-6xl mx-auto px-5">
-          <RevealSection>
-            <div className="text-center mb-16">
-              <p className="section-eyebrow">Transparent Pricing</p>
-              <h2 className="section-title">Pay Only for What You Use</h2>
-              <p className="section-subtitle">No subscriptions. No hidden fees. Prepaid wallet, spend as you go.</p>
-            </div>
-          </RevealSection>
-          <div className="grid md:grid-cols-3 gap-5">
-            {PRICING.map((plan, i) => (
-              <RevealSection key={plan.name} delay={i * 80}>
-                <div className={`pricing-card ${plan.popular ? "pricing-card-featured" : ""}`}>
-                  {plan.popular && <div className="pricing-popular-badge">Most Popular</div>}
-                  <div className="pricing-icon">{plan.icon}</div>
-                  <h3 className="text-lg font-bold text-white mb-1">{plan.name}</h3>
-                  <p className="text-[13px] text-white/35 mb-5">{plan.tagline}</p>
-                  <div className="mb-1"><span className="text-[28px] font-black text-white">{plan.price}</span><span className="text-[12px] text-white/30 ml-1.5">/ {plan.period}</span></div>
-                  <ul className="space-y-2.5 my-6">{plan.features.map(f => <li key={f} className="flex items-center gap-2.5 text-[13px] text-white/50"><CheckCircle className="w-3.5 h-3.5 text-cyan-400 shrink-0" />{f}</li>)}</ul>
-                  <Link href="/register"><button className={`w-full pricing-btn ${plan.popular ? "pricing-btn-featured" : ""}`}>{plan.name === "API / Bulk" ? "Contact Us" : plan.name === "Rent a Number" ? "Rent Now" : "Get OTP"} <ArrowRight className="w-4 h-4" /></button></Link>
-                </div>
-              </RevealSection>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ─── TRUST ─── */}
-      <section className="py-28 relative border-y border-white/5">
-        <div className="max-w-6xl mx-auto px-5">
-          <RevealSection>
-            <div className="text-center mb-16">
-              <p className="section-eyebrow">Built for Trust</p>
-              <h2 className="section-title">Security & Reliability First</h2>
-            </div>
-          </RevealSection>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {TRUST.map((t, i) => (
-              <RevealSection key={t.title} delay={i * 60}>
-                <div className="trust-card group">
-                  <div className={`trust-card-icon ${t.bg}`}>{t.icon}</div>
-                  <h3 className="font-bold text-white mb-2 text-[15px]">{t.title}</h3>
-                  <p className="text-[13px] text-white/35 leading-relaxed">{t.desc}</p>
-                </div>
-              </RevealSection>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ─── TESTIMONIALS ─── */}
-      <section className="py-28 relative">
-        <div className="max-w-5xl mx-auto px-5">
-          <RevealSection><div className="text-center mb-16"><p className="section-eyebrow">Testimonials</p><h2 className="section-title">Trusted Worldwide</h2></div></RevealSection>
+      {/* ════════ PRICING ════════ */}
+      <section id="pricing" className="l-section l-section-glow">
+        <div className="l-container">
+          <Reveal><div className="l-section-head"><span className="l-eyebrow">Transparent Pricing</span><h2 className="l-h2">Pay Only for What You Use</h2><p className="l-h2-sub">No subscriptions. Prepaid wallet, spend as you go.</p></div></Reveal>
           <div className="grid md:grid-cols-3 gap-5">
             {[
-              { text: "Got my WhatsApp OTP in literally 2 seconds. Unbelievably fast. This is the real deal.", name: "Alex K.", role: "Developer" },
-              { text: "Clean UI, instant codes, fair pricing. My absolute go-to for all account verifications.", name: "Sam T.", role: "Product Manager" },
-              { text: "API integration took 10 minutes. Works flawlessly in my automation scripts at scale.", name: "Jordan M.", role: "Backend Engineer" },
-            ].map((r, i) => (
-              <RevealSection key={r.name} delay={i * 80}>
-                <div className="review-card">
-                  <div className="flex gap-0.5 mb-3">{[1,2,3,4,5].map(s => <Star key={s} className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />)}</div>
-                  <p className="text-[13px] text-white/45 leading-relaxed mb-5 flex-1">"{r.text}"</p>
-                  <div className="flex items-center gap-3"><div className="review-avatar">{r.name[0]}</div><div><p className="text-[13px] font-semibold text-white">{r.name}</p><p className="text-[11px] text-white/30">{r.role}</p></div></div>
-                </div>
-              </RevealSection>
+              { name: "Receive OTP", tag: "One-time verification", price: "From $0.15", per: "per code", icon: <Key className="w-5 h-5" />, feats: ["20-min number window", "Full refund if no SMS", "500+ services", "Instant delivery", "No subscription"] },
+              { name: "Rent a Number", tag: "Extended rental", price: "From $0.50", per: "per rental", icon: <Server className="w-5 h-5" />, pop: true, feats: ["Keep the number longer", "Receive multiple SMS", "Full number control", "Works across all apps", "Extended options"] },
+              { name: "API / Bulk", tag: "Developer access", price: "Custom", per: "volume pricing", icon: <BarChart3 className="w-5 h-5" />, feats: ["REST API included", "Bulk ordering", "Webhook callbacks", "Reseller dashboard", "Priority support"] },
+            ].map((p, i) => (
+              <Reveal key={p.name} delay={i * 100}>
+                <GlowCard className={`l-price ${p.pop ? "l-price-pop" : ""}`} glowColor={p.pop ? "cyan" : undefined}>
+                  {p.pop && <div className="l-price-badge">Most Popular</div>}
+                  <div className="l-price-icon">{p.icon}</div>
+                  <h3 className="l-price-name">{p.name}</h3>
+                  <p className="l-price-tag">{p.tag}</p>
+                  <div className="l-price-amount">{p.price}<span>/ {p.per}</span></div>
+                  <ul className="l-price-feats">{p.feats.map(f => <li key={f}><CheckCircle className="w-3.5 h-3.5 text-cyan-400 shrink-0" />{f}</li>)}</ul>
+                  <Link href="/register"><button className={`l-price-btn ${p.pop ? "l-price-btn-pop" : ""}`}>{p.name === "API / Bulk" ? "Contact Us" : p.pop ? "Rent Now" : "Get OTP"} <ArrowRight className="w-4 h-4" /></button></Link>
+                </GlowCard>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ─── FAQ ─── */}
-      <section id="faq" className="py-28 border-t border-white/5">
-        <div className="max-w-3xl mx-auto px-5">
-          <RevealSection><div className="text-center mb-14"><p className="section-eyebrow">FAQ</p><h2 className="section-title">Common Questions</h2></div></RevealSection>
+      {/* ════════ TRUST ════════ */}
+      <section className="l-section">
+        <div className="l-container">
+          <Reveal><div className="l-section-head"><span className="l-eyebrow">Built for Trust</span><h2 className="l-h2">Security & Reliability First</h2></div></Reveal>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[
+              { icon: <Zap className="w-5 h-5 text-yellow-400" />, bg: "bg-yellow-400/10", title: "< 5 Second Delivery", desc: "OTP codes reach your dashboard nearly instantly." },
+              { icon: <Shield className="w-5 h-5 text-cyan-400" />, bg: "bg-cyan-400/10", title: "100% Anonymous", desc: "Your real number is never exposed or stored." },
+              { icon: <RefreshCw className="w-5 h-5 text-emerald-400" />, bg: "bg-emerald-400/10", title: "Full Refund Guarantee", desc: "No SMS? Instant automatic balance refund." },
+              { icon: <Globe className="w-5 h-5 text-violet-400" />, bg: "bg-violet-400/10", title: "50+ Countries", desc: "Global pool of virtual numbers worldwide." },
+              { icon: <Cpu className="w-5 h-5 text-orange-400" />, bg: "bg-orange-400/10", title: "REST API Access", desc: "Every account gets a free API key." },
+              { icon: <Lock className="w-5 h-5 text-pink-400" />, bg: "bg-pink-400/10", title: "Secure Wallet", desc: "Prepaid balance. No subscriptions, no surprises." },
+            ].map((t, i) => (
+              <Reveal key={t.title} delay={i * 60}>
+                <GlowCard className="l-trust">
+                  <div className={`l-trust-icon ${t.bg}`}>{t.icon}</div>
+                  <h3 className="l-trust-title">{t.title}</h3>
+                  <p className="l-trust-desc">{t.desc}</p>
+                </GlowCard>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ════════ TESTIMONIALS ════════ */}
+      <section className="l-section l-section-glow">
+        <div className="l-container max-w-5xl">
+          <Reveal><div className="l-section-head"><span className="l-eyebrow">Testimonials</span><h2 className="l-h2">Trusted Worldwide</h2></div></Reveal>
+          <div className="grid md:grid-cols-3 gap-5">
+            {[
+              { text: "Got my WhatsApp OTP in literally 2 seconds. Unbelievably fast.", name: "Alex K.", role: "Developer" },
+              { text: "Clean UI, instant codes, fair pricing. My go-to for all verifications.", name: "Sam T.", role: "Product Manager" },
+              { text: "API integration took 10 minutes. Works flawlessly at scale.", name: "Jordan M.", role: "Backend Engineer" },
+            ].map((r, i) => (
+              <Reveal key={r.name} delay={i * 80}>
+                <GlowCard className="l-review">
+                  <div className="flex gap-0.5 mb-3">{[1,2,3,4,5].map(s => <Star key={s} className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />)}</div>
+                  <p className="l-review-text">"{r.text}"</p>
+                  <div className="l-review-author"><div className="l-review-avatar">{r.name[0]}</div><div><p className="l-review-name">{r.name}</p><p className="l-review-role">{r.role}</p></div></div>
+                </GlowCard>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ════════ FAQ ════════ */}
+      <section id="faq" className="l-section">
+        <div className="l-container max-w-3xl">
+          <Reveal><div className="l-section-head"><span className="l-eyebrow">FAQ</span><h2 className="l-h2">Common Questions</h2></div></Reveal>
           <div className="space-y-3">
             {FAQS.map((faq, i) => (
-              <RevealSection key={i} delay={i * 40}>
-                <div className={`faq-item ${openFaq === i ? "faq-item-open" : ""}`}>
-                  <button className="flex items-center justify-between w-full p-5 text-left gap-4" onClick={() => setOpenFaq(openFaq === i ? null : i)}>
-                    <span className="font-semibold text-[14px] text-white/80">{faq.q}</span>
-                    <div className={`faq-chevron ${openFaq === i ? "faq-chevron-open" : ""}`}><ChevronDown className="w-3.5 h-3.5" /></div>
+              <Reveal key={i} delay={i * 40}>
+                <div className={`l-faq ${openFaq === i ? "l-faq-open" : ""}`}>
+                  <button className="l-faq-q" onClick={() => setOpenFaq(openFaq === i ? null : i)}>
+                    <span>{faq.q}</span>
+                    <div className={`l-faq-chevron ${openFaq === i ? "l-faq-chevron-open" : ""}`}><ChevronDown className="w-4 h-4" /></div>
                   </button>
-                  {openFaq === i && <div className="px-5 pb-5 text-[13px] text-white/40 leading-relaxed">{faq.a}</div>}
+                  {openFaq === i && <div className="l-faq-a">{faq.a}</div>}
                 </div>
-              </RevealSection>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ─── FINAL CTA ─── */}
-      <section className="py-8 px-5 pb-24">
-        <RevealSection>
-          <div className="max-w-5xl mx-auto">
-            <div className="cta-block">
-              <div className="cta-glow-top" />
-              <div className="cta-glow-bottom" />
-              <div className="absolute inset-0 hero-grid opacity-15 rounded-3xl" />
-              <div className="relative">
-                <div className="hero-badge mb-6"><Sparkles className="w-3.5 h-3.5" /><span>Free to start — No credit card required</span></div>
-                <h2 className="text-3xl md:text-5xl font-black text-white mb-5 leading-tight">
-                  Your Private Number.<br /><span className="hero-gradient-text">Ready in Seconds.</span>
-                </h2>
-                <p className="text-white/40 text-lg mb-10 max-w-lg mx-auto">Join thousands verifying accounts without exposing their real number.</p>
-                <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                  <Link href="/register"><button className="hero-cta-primary">Create Free Account <ArrowRight className="w-5 h-5" /></button></Link>
-                  <button className="hero-cta-secondary" onClick={() => scrollTo("platforms")}>Browse Services</button>
+      {/* ════════ FINAL CTA ════════ */}
+      <section className="l-section pb-24">
+        <div className="l-container max-w-5xl">
+          <Reveal>
+            <div className="l-final-cta">
+              <div className="l-final-glow-1" />
+              <div className="l-final-glow-2" />
+              <div className="l-final-grid" />
+              <div className="l-final-inner">
+                <div className="l-badge"><Sparkles className="w-3.5 h-3.5" /> No credit card required</div>
+                <h2 className="l-final-h2">Your Private Number.<br /><span className="l-h1-gradient">Ready in Seconds.</span></h2>
+                <p className="l-final-sub">Join thousands verifying accounts without exposing their real number.</p>
+                <div className="l-hero-ctas justify-center">
+                  <Link href="/register"><button className="l-btn-primary">Create Free Account <ArrowRight className="w-5 h-5" /></button></Link>
+                  <button className="l-btn-glass" onClick={() => go("platforms")}>Browse Services</button>
                 </div>
-                <p className="mt-6 text-white/15 text-sm">No credit card · Pay per use · Cancel anytime</p>
+                <p className="l-final-note">No credit card · Pay per use · Cancel anytime</p>
               </div>
             </div>
-          </div>
-        </RevealSection>
+          </Reveal>
+        </div>
       </section>
 
-      {/* ─── FOOTER ─── */}
-      <footer className="border-t border-white/5 bg-[#020710] py-12">
-        <div className="max-w-6xl mx-auto px-5">
+      {/* ════════ FOOTER ════════ */}
+      <footer className="l-footer">
+        <div className="l-container">
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-8 mb-10">
-            <div><Logo size={28} /><p className="text-[11px] text-white/25 mt-3 leading-relaxed max-w-[180px]">Instant virtual numbers for OTP verification & number rental worldwide.</p></div>
-            <div><p className="text-[11px] font-semibold text-white/40 uppercase tracking-widest mb-4">Product</p><div className="space-y-2.5">{[["Receive OTP", "platforms"], ["Rent Number", "pricing"], ["API", "pricing"]].map(([l, id]) => <button key={l} onClick={() => scrollTo(id)} className="block text-[13px] text-white/30 hover:text-white/60 transition-colors">{l}</button>)}</div></div>
-            <div><p className="text-[11px] font-semibold text-white/40 uppercase tracking-widest mb-4">Resources</p><div className="space-y-2.5">{[["How It Works", "how-it-works"], ["Pricing", "pricing"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => scrollTo(id)} className="block text-[13px] text-white/30 hover:text-white/60 transition-colors">{l}</button>)}</div></div>
-            <div><p className="text-[11px] font-semibold text-white/40 uppercase tracking-widest mb-4">Legal</p><div className="space-y-2.5">{["Privacy Policy", "Terms of Service", "Refund Policy"].map(l => <a key={l} href="#" className="block text-[13px] text-white/30 hover:text-white/60 transition-colors">{l}</a>)}</div></div>
+            <div><Logo size={26} /><p className="l-footer-desc">Virtual numbers for OTP verification & number rental worldwide.</p></div>
+            <div><p className="l-footer-heading">Product</p>{[["Receive OTP", "platforms"], ["Rent Number", "pricing"], ["API", "pricing"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
+            <div><p className="l-footer-heading">Resources</p>{[["How It Works", "how-it-works"], ["Pricing", "pricing"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
+            <div><p className="l-footer-heading">Legal</p>{["Privacy Policy", "Terms of Service", "Refund Policy"].map(l => <a key={l} href="#" className="l-footer-link">{l}</a>)}</div>
           </div>
-          <div className="border-t border-white/5 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-white/15">
+          <div className="l-footer-bottom">
             <p>&copy; {new Date().getFullYear()} GetOTPs. All rights reserved.</p>
             <p>Built for speed, privacy, and scale.</p>
           </div>
