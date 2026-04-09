@@ -3,3 +3,5 @@ dist/
 data.db
 *.db
 .env
+data.db-shm
+data.db-wal
