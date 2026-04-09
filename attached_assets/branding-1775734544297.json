@@ -1,0 +1,128 @@
+{
+  "colorScheme": "light",
+  "fonts": [
+    {
+      "family": "General Sans",
+      "role": "body"
+    }
+  ],
+  "colors": {
+    "primary": "#637083",
+    "secondary": "#1B9BA7",
+    "accent": "#1B9BA7",
+    "background": "#F9FAFB",
+    "textPrimary": "#0F1729",
+    "link": "#0F1729"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "General Sans",
+      "heading": "General Sans"
+    },
+    "fontStacks": {
+      "heading": [
+        "General Sans",
+        "sans-serif"
+      ],
+      "body": [
+        "General Sans",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "General Sans",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "72px",
+      "h2": "36px",
+      "body": "20px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 4,
+    "borderRadius": "4px"
+  },
+  "components": {
+    "buttonPrimary": {
+      "background": "#1B9BA7",
+      "textColor": "#FFFFFF",
+      "borderColor": "#157A84",
+      "borderRadius": "6px",
+      "borderRadiusCorners": {
+        "topLeft": "6px",
+        "topRight": "6px",
+        "bottomRight": "6px",
+        "bottomLeft": "6px"
+      },
+      "shadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(27, 155, 167, 0.2) 0px 10px 15px -3px, rgba(27, 155, 167, 0.2) 0px 4px 6px -4px"
+    },
+    "buttonSecondary": {
+      "background": "#F9FAFB",
+      "textColor": "#0F1729",
+      "borderRadius": "6px",
+      "borderRadiusCorners": {
+        "topLeft": "6px",
+        "topRight": "6px",
+        "bottomRight": "6px",
+        "bottomLeft": "6px"
+      },
+      "shadow": "none"
+    }
+  },
+  "images": {
+    "logo": "File saved at: attached_assets/logo.svg",
+    "favicon": "https://getotps.com/favicon.svg",
+    "ogImage": null,
+    "logoAlt": "GetOTPs logo"
+  },
+  "__llm_logo_reasoning": {
+    "selectedIndex": 0,
+    "reasoning": "Selected #0 because it is visible, located in the header, and the alt text matches the brand name 'GetOTPs'.",
+    "confidence": 0.9,
+    "source": "llm"
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": 3,
+      "text": "Get Started Free",
+      "reasoning": "Button #0 'Get Started Free' uses the vibrant brand color #1B9BA7 and has strong CTA text, making it the primary call-to-action."
+    },
+    "secondary": {
+      "index": 12,
+      "text": "Sign In",
+      "reasoning": "Button #2 'Sign In' has a different background color #F9FAFB and serves as a secondary action, suitable for returning users."
+    },
+    "confidence": 0.95
+  },
+  "personality": {
+    "tone": "professional",
+    "energy": "medium",
+    "targetAudience": "users needing SMS verification services"
+  },
+  "designSystem": {
+    "framework": "tailwind",
+    "componentLibrary": ""
+  },
+  "confidence": {
+    "buttons": 0.95,
+    "colors": 0.9,
+    "overall": 0.925
+  },
+  "__llm_metadata": {
+    "logoSelection": {
+      "llmCalled": true,
+      "llmSucceeded": true,
+      "finalSource": "llm",
+      "rawLogoSelection": {
+        "selectedLogoIndex": 0,
+        "selectedLogoReasoning": "Selected #0 because it is visible, located in the header, and the alt text matches the brand name 'GetOTPs'.",
+        "confidence": 0.9
+      }
+    },
+    "buttonClassification": {
+      "llmCalled": true,
+      "llmSucceeded": true
+    }
+  }
+}
