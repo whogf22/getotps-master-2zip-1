@@ -18,6 +18,10 @@ import {
   Menu,
   ChevronLeft,
   Plus,
+  Shield,
+  Users,
+  Wallet,
+  Settings,
 } from "lucide-react";
 
 const navItems = [
@@ -28,6 +32,13 @@ const navItems = [
   { href: "/funds", label: "Add Funds", icon: CreditCard },
   { href: "/api-docs", label: "API Docs", icon: BookOpen },
   { href: "/profile", label: "Profile", icon: User },
+];
+
+const adminNavItems = [
+  { href: "/admin", label: "Admin Dashboard", icon: Shield },
+  { href: "/admin/users", label: "Users", icon: Users },
+  { href: "/admin/deposits", label: "Pending Deposits", icon: Wallet },
+  { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 
 interface DashboardLayoutProps {
@@ -103,6 +114,36 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </Link>
           );
         })}
+
+        {user?.role === "admin" && (
+          <>
+            <div className={`my-3 mx-3 border-t border-sidebar-border ${collapsed ? "mx-1" : ""}`} />
+            {!collapsed && (
+              <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Admin</p>
+            )}
+            {adminNavItems.map(({ href, label, icon: Icon }) => {
+              const active = href === "/admin" ? location === "/admin" : location.startsWith(href);
+              return (
+                <Link key={href} href={href}>
+                  <a
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer select-none
+                      ${active
+                        ? "bg-amber-500/20 text-amber-400 shadow-sm"
+                        : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+                      }
+                      ${collapsed ? "justify-center" : ""}
+                    `}
+                    onClick={() => setMobileOpen(false)}
+                    title={collapsed ? label : undefined}
+                  >
+                    <Icon className={`w-4 h-4 shrink-0 ${active ? "text-amber-400" : ""}`} />
+                    {!collapsed && <span>{label}</span>}
+                  </a>
+                </Link>
+              );
+            })}
+          </>
+        )}
       </nav>
 
       {/* Footer actions */}

@@ -816,7 +816,12 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/crypto/pending", requireAdmin, async (_req, res) => {
-    res.json(await storage.getAllPendingCryptoDeposits());
+    const deposits = await storage.getAllPendingCryptoDeposits();
+    const enriched = await Promise.all(deposits.map(async (d) => {
+      const u = await storage.getUser(d.userId);
+      return { ...d, username: u?.username || "Unknown", email: u?.email || "" };
+    }));
+    res.json(enriched);
   });
 
   app.get("/api/transactions", requireAuth, async (req, res) => {
@@ -875,6 +880,52 @@ export async function registerRoutes(
       if (price_multiplier !== undefined) await storage.setSetting("price_multiplier", String(price_multiplier));
       if (default_country !== undefined) await storage.setSetting("default_country", String(default_country));
       res.json({ message: "Settings updated" });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.post("/api/admin/users/:id/add-balance", requireAdmin, async (req, res) => {
+    try {
+      const { amount, description } = req.body;
+      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+        return res.status(400).json({ message: "Valid positive amount is required" });
+      }
+      const targetUser = await storage.getUser(Number(req.params.id));
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      const newBalance = (parseFloat(targetUser.balance) + Number(amount)).toFixed(2);
+      await storage.updateUserBalance(targetUser.id, newBalance);
+      await storage.createTransaction({
+        userId: targetUser.id,
+        type: "deposit",
+        amount: String(Number(amount).toFixed(2)),
+        description: description || "Admin balance adjustment",
+        orderId: null,
+        stripeSessionId: null,
+        createdAt: new Date().toISOString(),
+      });
+      res.json({ message: "Balance updated", newBalance });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.post("/api/admin/crypto/:id/reject", requireAdmin, async (req, res) => {
+    try {
+      const deposit = await storage.getCryptoDeposit(Number(req.params.id));
+      if (!deposit) return res.status(404).json({ message: "Deposit not found" });
+      if (deposit.status === "completed") return res.status(400).json({ message: "Cannot reject completed deposit" });
+      await storage.updateCryptoDeposit(deposit.id, { status: "rejected", completedAt: new Date().toISOString() });
+      res.json({ message: "Deposit rejected" });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/admin/transactions", requireAdmin, async (_req, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const txns: any[] = [];
+      for (const u of allUsers) {
+        const userTxns = await storage.getUserTransactions(u.id);
+        txns.push(...userTxns.map(t => ({ ...t, username: u.username, email: u.email })));
+      }
+      txns.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      res.json(txns.slice(0, 100));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 

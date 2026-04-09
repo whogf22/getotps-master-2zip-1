@@ -50,11 +50,16 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 ```
 client/src/
   pages/Landing.tsx          - Main landing page with GlowCard, Reveal, parallax hero
+  pages/AdminDashboard.tsx   - Admin overview: stats, recent users, transactions
+  pages/AdminUsers.tsx       - User management: search, list, add-balance modal
+  pages/AdminDeposits.tsx    - Pending crypto deposits: confirm/reject
+  pages/AdminSettings.tsx    - Platform settings: price multiplier, default country
   components/3d/
     HeroScene.tsx            - Full 3D scene (globe, hexgrid, streams, panels, particles)
     LiveOTPFeed.tsx           - LiveOTPTicker + NetworkStats components
     PhoneMockup.tsx          - CSS-only phone with OTP display
     SceneErrorBoundary.tsx   - Error boundary for WebGL failures
+  components/DashboardLayout.tsx - Sidebar with admin nav (role-gated)
   components/Logo.tsx        - Logo component using --primary CSS var
   index.css                  - Complete design system (~1237 lines, @layer organized)
 server/
@@ -72,8 +77,14 @@ shared/
 - **Orders (Virtual)**: POST /api/orders, GET /api/orders/active, POST /:id/check-sms, /:id/cancel
 - **Rentals**: POST /api/rentals, GET /api/rentals/active, GET /:id/messages, POST /:id/cancel
 - **Crypto**: GET /api/crypto/currencies, POST /create-deposit, POST /:id/submit-hash
-- **Admin**: GET /api/admin/stats, /users, PUT /services/:id, GET/PUT /settings, GET /proxnum/balance
+- **Admin**: GET /api/admin/stats, /users, /transactions, PUT /services/:id, GET/PUT /settings, POST /users/:id/add-balance, POST /crypto/:id/confirm, POST /crypto/:id/reject, GET /crypto/pending
 - **API v1**: GET /api/v1/services, GET /price, POST /order, GET /order/:id, POST /order/:id/cancel, POST /order/:id/resend, POST /rental
+
+## Admin Panel
+- Routes: /admin, /admin/users, /admin/deposits, /admin/settings
+- Protected by `AdminRoute` component (redirects non-admin users to /dashboard)
+- Admin sidebar links (amber-themed) appear only for users with role "admin"
+- Default admin: admin@getotps.com / admin123
 
 ## Important Notes
 - Three.js packages pinned: fiber@8.18.0, drei@9.122.0, three@0.183.2 (React 18 compatible)

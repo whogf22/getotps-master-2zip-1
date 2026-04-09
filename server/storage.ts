@@ -425,7 +425,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllPendingCryptoDeposits(): Promise<CryptoDeposit[]> {
-    return db.select().from(cryptoDeposits).where(eq(cryptoDeposits.status, "pending")).orderBy(desc(cryptoDeposits.id)).all();
+    return db.select().from(cryptoDeposits).where(
+      or(eq(cryptoDeposits.status, "pending"), eq(cryptoDeposits.status, "confirming"))
+    ).orderBy(desc(cryptoDeposits.id)).all();
   }
 }
 
