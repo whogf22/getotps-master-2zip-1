@@ -10,13 +10,23 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 - **SMS Provider**: Proxnum API (https://proxnum.com/api/v1) — Bearer token auth via PROXNUM_API_KEY env var
 - **Styling**: Vanilla CSS with `@layer` system in `client/src/index.css`
 
-## SMS Provider Integration (Proxnum)
+## SMS Provider Integration (Proxnum Reseller API)
+- **API Docs**: https://proxnum.com/reseller-api-docs
 - **API Client**: `server/proxnum.ts` — typed wrapper with caching for services/countries/prices
+- **Auth**: Bearer token via `Authorization: Bearer {PROXNUM_API_KEY}` + `Accept: application/json` header
 - **Service Sync**: On startup, fetches all services and aggregated prices from Proxnum, applies global markup multiplier, upserts into DB
-- **Country Codes**: Proxnum uses numeric country codes (e.g., "12" = USA virtual, "1" = Ukraine, "0" = Russia). Resolved via `findCountryCode()`
+- **Country Codes**: Proxnum uses numeric country codes (e.g., "12" = USA virtual, "187" = USA, "0" = Russia). Resolved via `findCountryCode()`
 - **Price Markup**: `finalPrice = basePrice × globalMultiplier × serviceMultiplier` — settings stored in DB `settings` table
-- **Virtual Numbers**: POST `/virtual/buy`, GET `/virtual/{id}/status`, POST `/virtual/{id}/cancel`
+- **Virtual Numbers (Reseller Endpoints)**:
+  - `POST /resell/virtual/buy` — body: `{service, country}` → response: `{success, activation: {id, phone, activation_id, msg, amount_paid, status}}`
+  - `GET /resell/virtual/{activation_id}/status` → response: `{success, status: "completed", code: "1234", activation: {id, phone, activation_id}}`
+  - `POST /resell/virtual/cancel` — body: `{activation_id}` → response: `{success, code: "cancel_accepted"|"cancel_rejected"}`
+  - `POST /resell/virtual/resend` — body: `{activation_id}` → response: `{success, activation: {id, activation_id, phone}}`
+  - `GET /resell/activations?page=1&per_page=25` — paginated activation list
+  - `GET /resell/price?service=ig&country=6` — per-service price check
+- **Normalized Error Codes**: `no_numbers`, `insufficient_balance`, `service_unavailable`, `cancel_rejected`
 - **Rentals**: POST `/rental/buy`, GET `/rental/{id}/status`, POST `/rental/cancel`, GET `/rentals/{id}/messages`
+- **Note**: PROXNUM_API_KEY must be a real API token generated from Proxnum Profile → API Keys (not the license key)
 
 ## Database Schema (SQLite)
 - `users` — auth, balance, API key, role
@@ -63,7 +73,7 @@ shared/
 - **Rentals**: POST /api/rentals, GET /api/rentals/active, GET /:id/messages, POST /:id/cancel
 - **Crypto**: GET /api/crypto/currencies, POST /create-deposit, POST /:id/submit-hash
 - **Admin**: GET /api/admin/stats, /users, PUT /services/:id, GET/PUT /settings, GET /proxnum/balance
-- **API v1**: GET /api/v1/services, POST /order, GET /order/:id, POST /order/:id/cancel, POST /rental
+- **API v1**: GET /api/v1/services, GET /price, POST /order, GET /order/:id, POST /order/:id/cancel, POST /order/:id/resend, POST /rental
 
 ## Important Notes
 - Three.js packages pinned: fiber@8.18.0, drei@9.122.0, three@0.183.2 (React 18 compatible)

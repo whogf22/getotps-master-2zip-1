@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, type ProxnumService } from "./proxnum";
+import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -304,14 +304,16 @@ export async function registerRoutes(
 
       const pnResult = await proxnumApi.buyVirtual(service.slug, resolvedCountry);
 
-      if (pnResult.error) {
-        return res.status(503).json({
-          message: pnResult.error.message || "No numbers available for this service. Try again later.",
+      if (!pnResult.success || pnResult.error) {
+        const statusCode = pnResult.code === "insufficient_balance" ? 503 : 503;
+        return res.status(statusCode).json({
+          message: friendlyError(pnResult),
         });
       }
 
-      const proxnumId = String(pnResult.id || pnResult.activation_id || "");
-      const phoneNumber = pnResult.number || pnResult.phone || "";
+      const activation = pnResult.activation || pnResult;
+      const proxnumId = String(activation.activation_id || activation.id || "");
+      const phoneNumber = activation.phone || activation.number || "";
 
       if (!phoneNumber) {
         return res.status(503).json({ message: "No numbers available right now. Try again shortly." });
@@ -395,19 +397,29 @@ export async function registerRoutes(
 
       const pnResult = await proxnumApi.getVirtualStatus(order.proxnumId);
 
-      if (pnResult.error) {
+      if (!pnResult.success && pnResult.error) {
         return res.json({ status: "pending", messages: [], otpCode: null });
       }
 
-      const statusData = pnResult.data || pnResult;
-      const code = statusData.code || statusData.msg || statusData.sms_code || null;
-      const fullSms = statusData.full_sms || statusData.sms || statusData.message || "";
-      const apiStatus = statusData.status || "";
+      const apiStatus = pnResult.status || "";
+      const code = pnResult.code || null;
+      const activation = pnResult.activation || {};
+      const fullSms = activation.msg || activation.full_sms || activation.sms || "";
+
+      if (apiStatus === "completed" && code) {
+        const messages = [{ timestamp: Date.now().toString(), sender: "service", text: fullSms || `Code: ${code}` }];
+        await storage.updateOrderSms(order.id, JSON.stringify(messages), code);
+        return res.json({
+          status: "received",
+          messages,
+          otpCode: code,
+          fullText: fullSms || `Code: ${code}`,
+        });
+      }
 
       if (code && /^\d{4,8}$/.test(code)) {
         const messages = [{ timestamp: Date.now().toString(), sender: "service", text: fullSms || `Code: ${code}` }];
         await storage.updateOrderSms(order.id, JSON.stringify(messages), code);
-
         return res.json({
           status: "received",
           messages,
@@ -425,7 +437,7 @@ export async function registerRoutes(
         }
       }
 
-      if (apiStatus === "completed" || apiStatus === "cancelled" || apiStatus === "expired") {
+      if (apiStatus === "cancelled" || apiStatus === "expired") {
         await storage.updateOrderStatus(order.id, apiStatus);
         return res.json({ status: apiStatus, messages: [], otpCode: null });
       }
@@ -448,10 +460,12 @@ export async function registerRoutes(
       }
 
       if (order.proxnumId) {
-        try {
-          await proxnumApi.cancelVirtual(order.proxnumId);
-        } catch (e) {
-          console.error("Proxnum cancel error:", e);
+        const cancelResult = await proxnumApi.cancelVirtual(order.proxnumId);
+        if (cancelResult.code === "cancel_rejected") {
+          return res.status(400).json({ message: friendlyError(cancelResult) });
+        }
+        if (!cancelResult.success && cancelResult.code !== "cancel_accepted") {
+          return res.status(503).json({ message: friendlyError(cancelResult) });
         }
       }
 
@@ -474,6 +488,42 @@ export async function registerRoutes(
 
       res.json({ message: "Order cancelled and refunded" });
     } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/orders/:id/resend", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const order = await storage.getOrder(Number(req.params.id));
+      if (!order) return res.status(404).json({ message: "Order not found" });
+      if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
+      if (order.status !== "pending" && order.status !== "waiting") {
+        return res.status(400).json({ message: "Cannot resend for this order" });
+      }
+      if (!order.proxnumId) {
+        return res.status(400).json({ message: "No Proxnum activation linked" });
+      }
+
+      const pnResult = await proxnumApi.resendVirtual(order.proxnumId);
+
+      if (!pnResult.success) {
+        return res.status(400).json({ message: friendlyError(pnResult) });
+      }
+
+      const newActivation = pnResult.activation;
+      if (newActivation && newActivation.activation_id) {
+        await storage.updateOrderProxnumId(order.id, String(newActivation.activation_id));
+        const newPhone = newActivation.phone || "";
+        if (newPhone) {
+          const formattedPhone = newPhone.startsWith("+") ? newPhone : `+${newPhone}`;
+          await storage.updateOrderPhone(order.id, formattedPhone);
+        }
+      }
+
+      res.json({ message: "Resend requested successfully", activation: newActivation });
+    } catch (err: any) {
+      console.error("Resend error:", err);
       res.status(500).json({ message: err.message });
     }
   });
@@ -863,12 +913,13 @@ export async function registerRoutes(
       const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
 
       const pnResult = await proxnumApi.buyVirtual(svc.slug, resolvedCountry);
-      if (pnResult.error) {
-        return res.status(503).json({ error: pnResult.error.message || "No numbers available" });
+      if (!pnResult.success || pnResult.error) {
+        return res.status(503).json({ error: friendlyError(pnResult) });
       }
 
-      const proxnumId = String(pnResult.id || pnResult.activation_id || "");
-      const phoneNumber = pnResult.number || pnResult.phone || "";
+      const activation = pnResult.activation || pnResult;
+      const proxnumId = String(activation.activation_id || activation.id || "");
+      const phoneNumber = activation.phone || activation.number || "";
       if (!phoneNumber) {
         return res.status(503).json({ error: "No numbers available" });
       }
@@ -906,12 +957,13 @@ export async function registerRoutes(
     if ((order.status === "pending" || order.status === "waiting") && order.proxnumId) {
       try {
         const pnResult = await proxnumApi.getVirtualStatus(order.proxnumId);
-        if (!pnResult.error) {
-          const statusData = pnResult.data || pnResult;
-          const code = statusData.code || statusData.msg || statusData.sms_code || null;
-          const fullSms = statusData.full_sms || statusData.sms || statusData.message || "";
+        if (pnResult.success || !pnResult.error) {
+          const apiStatus = pnResult.status || "";
+          const code = pnResult.code || null;
+          const activation = pnResult.activation || {};
+          const fullSms = activation.msg || activation.full_sms || activation.sms || "";
 
-          if (code && /^\d{4,8}$/.test(code)) {
+          if ((apiStatus === "completed" && code) || (code && /^\d{4,8}$/.test(code))) {
             const messages = [{ timestamp: Date.now().toString(), sender: "service", text: fullSms || `Code: ${code}` }];
             await storage.updateOrderSms(order.id, JSON.stringify(messages), code);
             return res.json({
@@ -956,7 +1008,13 @@ export async function registerRoutes(
       if (order.status !== "pending" && order.status !== "waiting") return res.status(400).json({ error: "Cannot cancel" });
 
       if (order.proxnumId) {
-        try { await proxnumApi.cancelVirtual(order.proxnumId); } catch (e) {}
+        const cancelResult = await proxnumApi.cancelVirtual(order.proxnumId);
+        if (cancelResult.code === "cancel_rejected") {
+          return res.status(400).json({ error: friendlyError(cancelResult) });
+        }
+        if (!cancelResult.success && cancelResult.code !== "cancel_accepted") {
+          return res.status(503).json({ error: friendlyError(cancelResult) });
+        }
       }
 
       await storage.cancelOrder(order.id);
@@ -966,6 +1024,46 @@ export async function registerRoutes(
         await storage.updateUserBalance(user.id, newBalance);
       }
       res.json({ message: "Order cancelled and refunded" });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.get("/api/v1/price", requireApiKey, async (req, res) => {
+    try {
+      const { service, country } = req.query;
+      if (!service || !country) return res.status(400).json({ error: "service and country required" });
+      const pnResult = await proxnumApi.getResellPrice(String(service), String(country));
+      if (!pnResult.success && pnResult.error) {
+        return res.status(400).json({ error: friendlyError(pnResult) });
+      }
+      res.json(pnResult);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post("/api/v1/order/:id/resend", requireApiKey, async (req, res) => {
+    try {
+      const user = (req as any).apiUser;
+      const order = await storage.getOrder(Number(req.params.id));
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      if (order.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
+      if (order.status !== "pending" && order.status !== "waiting") return res.status(400).json({ error: "Cannot resend for this order" });
+      if (!order.proxnumId) return res.status(400).json({ error: "No activation linked" });
+
+      const pnResult = await proxnumApi.resendVirtual(order.proxnumId);
+      if (!pnResult.success) {
+        return res.status(400).json({ error: friendlyError(pnResult) });
+      }
+
+      const newActivation = pnResult.activation;
+      if (newActivation && newActivation.activation_id) {
+        await storage.updateOrderProxnumId(order.id, String(newActivation.activation_id));
+        const newPhone = newActivation.phone || "";
+        if (newPhone) {
+          const formattedPhone = newPhone.startsWith("+") ? newPhone : `+${newPhone}`;
+          await storage.updateOrderPhone(order.id, formattedPhone);
+        }
+      }
+
+      res.json({ message: "Resend requested successfully", activation: newActivation });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 

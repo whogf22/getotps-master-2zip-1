@@ -3,12 +3,27 @@ const PROXNUM_API_KEY = process.env.PROXNUM_API_KEY || "";
 
 interface ProxnumResponse {
   success?: boolean;
+  code?: string;
+  message?: string;
   error?: {
     code: string;
     key: string;
     message: string;
   };
   [key: string]: any;
+}
+
+const PROXNUM_ERROR_MESSAGES: Record<string, string> = {
+  no_numbers: "No numbers available for this service in the selected country",
+  insufficient_balance: "Proxnum account has insufficient balance. Contact admin.",
+  service_unavailable: "This service is temporarily unavailable. Try again later.",
+  cancel_rejected: "Cancellation rejected — activation already completed or not refundable",
+};
+
+function friendlyError(res: ProxnumResponse): string {
+  const code = res.code || res.error?.code || "";
+  if (PROXNUM_ERROR_MESSAGES[code]) return PROXNUM_ERROR_MESSAGES[code];
+  return res.message || res.error?.message || "An unexpected error occurred with the SMS provider";
 }
 
 async function request(
@@ -21,6 +36,7 @@ async function request(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "Accept": "application/json",
   };
 
   if (authenticated) {
@@ -47,6 +63,7 @@ async function request(
     if (!contentType.includes("application/json")) {
       return {
         success: false,
+        code: "not_json",
         error: {
           code: `E${res.status}`,
           key: "not_json",
@@ -56,13 +73,15 @@ async function request(
     }
     const result = await res.json();
 
-    if (!res.ok && (!result || !result.error)) {
+    if (!res.ok && !result.success && !result.error) {
       return {
         success: false,
+        code: result.code || `E${res.status}`,
+        message: result.message || `HTTP Error: ${res.status}`,
         error: {
-          code: `E${res.status}`,
+          code: result.code || `E${res.status}`,
           key: "http_error",
-          message: `HTTP Error: ${res.status}`,
+          message: result.message || `HTTP Error: ${res.status}`,
         },
       };
     }
@@ -71,6 +90,7 @@ async function request(
   } catch (err: any) {
     return {
       success: false,
+      code: "connection_error",
       error: {
         code: "E9999",
         key: "connection_error",
@@ -79,6 +99,8 @@ async function request(
     };
   }
 }
+
+export { friendlyError };
 
 export const proxnumApi = {
   getCountries() {
@@ -93,23 +115,31 @@ export const proxnumApi = {
     const params: Record<string, string> = {};
     if (country) params.country = country;
     if (service) params.service = service;
-    return request("GET", "/prices", params, false);
+    return request("GET", "/prices", params, true);
+  },
+
+  getResellPrice(service: string, country: string | number) {
+    return request("GET", "/resell/price", { service, country }, true);
   },
 
   getAvailability(country: string, service: string) {
     return request("GET", "/availability", { country, service }, false);
   },
 
-  buyVirtual(service: string, country: string) {
-    return request("POST", "/virtual/buy", { service, country });
+  buyVirtual(service: string, country: string | number) {
+    return request("POST", "/resell/virtual/buy", { service, country: Number(country) });
   },
 
-  getVirtualStatus(id: string | number) {
-    return request("GET", `/virtual/${id}/status`);
+  getVirtualStatus(activationId: string | number) {
+    return request("GET", `/resell/virtual/${activationId}/status`);
   },
 
-  cancelVirtual(id: string | number) {
-    return request("POST", `/virtual/${id}/cancel`);
+  cancelVirtual(activationId: string | number) {
+    return request("POST", "/resell/virtual/cancel", { activation_id: String(activationId) });
+  },
+
+  resendVirtual(activationId: string | number) {
+    return request("POST", "/resell/virtual/resend", { activation_id: String(activationId) });
   },
 
   getUserBalance() {
@@ -147,12 +177,12 @@ export const proxnumApi = {
     return request("GET", `/countries/${country}/services`, {}, false);
   },
 
-  listActivations(limit = 50, page = 1) {
-    return request("GET", "/resell/activations", { per_page: limit, page });
+  listActivations(page = 1, perPage = 50) {
+    return request("GET", "/resell/activations", { page, per_page: perPage });
   },
 
-  listRentals(limit = 50, page = 1) {
-    return request("GET", "/resell/rentals", { per_page: limit, page });
+  listRentals(page = 1, perPage = 50) {
+    return request("GET", "/resell/rentals", { page, per_page: perPage });
   },
 };
 

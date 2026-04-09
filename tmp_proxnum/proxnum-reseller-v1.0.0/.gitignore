@@ -1,0 +1,57 @@
+# Proxnum Reseller - Ignored Files
+
+# Config files (generated during installation)
+/config/database.php
+/config/app.php
+
+# Cache and logs
+/cache/*
+!/cache/.gitkeep
+/logs/*
+!/logs/.gitkeep
+
+# Environment files
+.env
+.env.*
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Backup files
+*.sql
+*.zip
+backup/
+
+# Node modules (if using build tools)
+node_modules/
+npm-debug.log
+
+# Composer (if extending)
+/vendor/
+composer.lock
+
+# Upload directories
+/uploads/*
+!/uploads/.gitkeep
+
+# Installation folder (should be deleted after install)
+# /install/
+
+# Test files
+phpunit.xml
+/tests/
+.phpunit.result.cache

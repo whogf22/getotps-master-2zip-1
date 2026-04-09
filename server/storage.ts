@@ -180,6 +180,8 @@ export interface IStorage {
   updateOrderStatus(id: number, status: string, otpCode?: string): Promise<void>;
   updateOrderSms(id: number, smsMessages: string, otpCode?: string): Promise<void>;
   cancelOrder(id: number): Promise<void>;
+  updateOrderProxnumId(id: number, proxnumId: string): Promise<void>;
+  updateOrderPhone(id: number, phoneNumber: string): Promise<void>;
   getAllOrders(): Promise<Order[]>;
 
   createRental(data: InsertRental): Promise<Rental>;
@@ -327,6 +329,14 @@ export class DatabaseStorage implements IStorage {
 
   async cancelOrder(id: number): Promise<void> {
     db.update(orders).set({ status: "cancelled", completedAt: new Date().toISOString() }).where(eq(orders.id, id)).run();
+  }
+
+  async updateOrderProxnumId(id: number, proxnumId: string): Promise<void> {
+    db.update(orders).set({ proxnumId }).where(eq(orders.id, id)).run();
+  }
+
+  async updateOrderPhone(id: number, phoneNumber: string): Promise<void> {
+    db.update(orders).set({ phoneNumber }).where(eq(orders.id, id)).run();
   }
 
   async getAllOrders(): Promise<Order[]> {
