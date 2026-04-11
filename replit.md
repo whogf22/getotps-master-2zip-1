@@ -28,15 +28,25 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 - **Rentals**: POST `/rental/buy`, GET `/rental/{id}/status`, POST `/rental/cancel`, GET `/rentals/{id}/messages`
 - **Note**: PROXNUM_API_KEY must be a real API token generated from Proxnum Profile → API Keys (not the license key)
 
+## Circle Programmable Wallets Integration
+- **SDK**: `@circle-fin/developer-controlled-wallets` — Developer-Controlled wallet model
+- **Service**: `server/circle.ts` — wraps Circle SDK (create wallet set, create wallet, get balance, list transactions)
+- **Env Vars**: `CIRCLE_API_KEY` (Circle API key) + `CIRCLE_ENTITY_SECRET` (32-byte entity secret)
+- **User Flow**: Each user gets a unique Ethereum wallet address for USDC deposits via Circle
+- **Auto-detection**: `POST /api/circle/check-deposits` polls Circle for inbound USDC transfers and auto-credits user balance
+- **Fallback**: When Circle is not configured, the Add Funds page falls back to manual crypto deposit (static wallets + admin confirmation)
+- **DB Fields**: `users.circle_wallet_id`, `users.circle_wallet_address` — stores per-user Circle wallet info
+- **Endpoints**: `GET /api/circle/configured`, `GET /api/circle/wallet`, `POST /api/circle/wallet/create`, `POST /api/circle/check-deposits`
+
 ## Database Schema (SQLite)
-- `users` — auth, balance, API key, role
+- `users` — auth, balance, API key, role, circle_wallet_id, circle_wallet_address
 - `services` — cached from Proxnum with slug=service code (e.g., "tg", "wa", "fb")
 - `orders` — virtual number activations with proxnum_id, country, status tracking
 - `rentals` — longer-term number leases with days, expiry, proxnum_id
 - `rental_messages` — SMS messages received on rented numbers
 - `settings` — key/value config (price_multiplier, default_country, per-service multipliers)
 - `transactions` — financial ledger (deposit, purchase, refund)
-- `crypto_deposits` — crypto payment flow
+- `crypto_deposits` — crypto payment flow, optional circle_transfer_id
 
 ## Key Design Decisions
 - **Single WebGL canvas**: Only the HeroScene uses R3F Canvas. PhoneMockup is CSS-only to prevent GPU context loss.
@@ -64,8 +74,9 @@ client/src/
   index.css                  - Complete design system (~1237 lines, @layer organized)
 server/
   index.ts                   - Express server entry
-  routes.ts                  - API routes (auth, orders, rentals, crypto, admin)
+  routes.ts                  - API routes (auth, orders, rentals, crypto, circle, admin)
   proxnum.ts                 - Proxnum API client with caching
+  circle.ts                  - Circle Programmable Wallets SDK wrapper
   storage.ts                 - Database storage layer (Drizzle ORM)
 shared/
   schema.ts                  - Drizzle schema definitions
@@ -76,7 +87,8 @@ shared/
 - **Services**: GET /api/services, /api/countries, /api/prices
 - **Orders (Virtual)**: POST /api/orders, GET /api/orders/active, POST /:id/check-sms, /:id/cancel
 - **Rentals**: POST /api/rentals, GET /api/rentals/active, GET /:id/messages, POST /:id/cancel
-- **Crypto**: GET /api/crypto/currencies, POST /create-deposit, POST /:id/submit-hash
+- **Circle Wallet**: GET /api/circle/configured, GET /wallet, POST /wallet/create, POST /check-deposits
+- **Crypto (Legacy)**: GET /api/crypto/currencies, POST /create-deposit, POST /:id/submit-hash
 - **Admin**: GET /api/admin/stats, /users, /transactions, PUT /services/:id, GET/PUT /settings, POST /users/:id/add-balance, POST /crypto/:id/confirm, POST /crypto/:id/reject, GET /crypto/pending
 - **API v1**: GET /api/v1/services, GET /price, POST /order, GET /order/:id, POST /order/:id/cancel, POST /order/:id/resend, POST /rental
 

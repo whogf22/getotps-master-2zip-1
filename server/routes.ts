@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
+import * as circle from "./circle";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -811,6 +812,144 @@ export async function registerRoutes(
     res.json({ balance: freshUser?.balance || "0.00" });
   });
 
+  app.get("/api/circle/configured", requireAuth, (_req, res) => {
+    res.json({ configured: circle.isCircleConfigured() });
+  });
+
+  app.get("/api/circle/wallet", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(404).json({ message: "User not found" });
+
+      if (freshUser.circleWalletId && freshUser.circleWalletAddress) {
+        let balance = "0";
+        try {
+          const walletBalance = await circle.getWalletBalance(freshUser.circleWalletId);
+          const usdcBalance = walletBalance.balances.find(
+            b => b.tokenSymbol === "USDC" || b.tokenName?.includes("USDC") || b.tokenName?.includes("USD Coin")
+          );
+          if (usdcBalance) balance = usdcBalance.amount;
+        } catch (e) {}
+        return res.json({
+          walletId: freshUser.circleWalletId,
+          address: freshUser.circleWalletAddress,
+          balance,
+          hasWallet: true,
+        });
+      }
+
+      res.json({ hasWallet: false, walletId: null, address: null, balance: "0" });
+    } catch (err: any) {
+      res.status(500).json({ message: safeError(err) });
+    }
+  });
+
+  app.post("/api/circle/wallet/create", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(404).json({ message: "User not found" });
+
+      if (freshUser.circleWalletId && freshUser.circleWalletAddress) {
+        return res.json({
+          walletId: freshUser.circleWalletId,
+          address: freshUser.circleWalletAddress,
+          message: "Wallet already exists",
+        });
+      }
+
+      if (!circle.isCircleConfigured()) {
+        return res.status(503).json({ message: "Circle wallet service is not configured. Contact support." });
+      }
+
+      const walletSetId = await circle.getOrCreateDefaultWalletSet();
+      const blockchain = req.body?.blockchain || "ETH";
+      const wallet = await circle.createUserWallet(walletSetId, blockchain);
+
+      await storage.updateUserCircleWallet(user.id, wallet.walletId, wallet.address);
+
+      res.json({
+        walletId: wallet.walletId,
+        address: wallet.address,
+        blockchain: wallet.blockchain,
+        message: "Wallet created successfully",
+      });
+    } catch (err: any) {
+      console.error("Circle wallet creation error:", err);
+      res.status(500).json({ message: safeError(err) });
+    }
+  });
+
+  app.post("/api/circle/check-deposits", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser?.circleWalletId) {
+        return res.status(400).json({ message: "No Circle wallet found" });
+      }
+
+      const transactions = await circle.listWalletTransactions(freshUser.circleWalletId);
+      const inboundTransfers = transactions.filter(
+        tx => tx.type === "INBOUND" && tx.state === "CONFIRMED"
+      );
+
+      let credited = 0;
+      for (const tx of inboundTransfers) {
+        const existingDeposits = await storage.getUserCryptoDeposits(freshUser.id);
+        const alreadyRecorded = existingDeposits.some(
+          d => d.txHash === tx.txHash || (d as any).circleTransferId === tx.id
+        );
+        if (alreadyRecorded) continue;
+
+        const usdAmount = parseFloat(tx.amounts[0] || "0");
+        if (usdAmount <= 0) continue;
+
+        const now = new Date().toISOString();
+        await storage.createCryptoDeposit({
+          userId: freshUser.id,
+          currency: "USDC",
+          amount: usdAmount.toFixed(2),
+          cryptoAmount: tx.amounts[0],
+          walletAddress: freshUser.circleWalletAddress || "",
+          txHash: tx.txHash || tx.id,
+          status: "completed",
+          createdAt: tx.createDate || now,
+          expiresAt: now,
+          completedAt: now,
+        });
+
+        const currentBalance = parseFloat(freshUser.balance);
+        const newBalance = (currentBalance + usdAmount).toFixed(2);
+        await storage.updateUserBalance(freshUser.id, newBalance);
+        freshUser.balance = newBalance;
+
+        await storage.createTransaction({
+          userId: freshUser.id,
+          type: "deposit",
+          amount: usdAmount.toFixed(2),
+          description: `USDC deposit via Circle wallet (auto-detected)`,
+          orderId: null,
+          stripeSessionId: null,
+          createdAt: now,
+        });
+
+        credited++;
+      }
+
+      res.json({
+        message: credited > 0
+          ? `${credited} new deposit(s) detected and credited`
+          : "No new deposits found",
+        credited,
+        newBalance: freshUser.balance,
+      });
+    } catch (err: any) {
+      console.error("Circle deposit check error:", err);
+      res.status(500).json({ message: safeError(err) });
+    }
+  });
+
   app.get("/api/crypto/currencies", requireAuth, (_req, res) => {
     const currencies = Object.entries(CRYPTO_WALLETS).map(([key, address]) => ({
       id: key,
@@ -856,7 +995,6 @@ export async function registerRoutes(
       if (!txHash || typeof txHash !== "string") {
         return res.status(400).json({ message: "Transaction hash is required" });
       }
-      // Validate txHash: 64 hex chars for BTC/LTC/TRC20, or 0x + 64 hex chars for ERC20/ETH
       const normalizedHash = txHash.startsWith("0x") || txHash.startsWith("0X")
         ? txHash.slice(2)
         : txHash;
@@ -871,8 +1009,6 @@ export async function registerRoutes(
       res.json({ message: "Transaction hash submitted. Awaiting admin confirmation." });
     } catch (err: any) { res.status(500).json({ message: "Submission failed" }); }
   });
-
-  // NOTE: Self-confirmation endpoint removed — only admins can confirm deposits via /api/admin/crypto/:id/confirm
 
   app.post("/api/admin/crypto/:id/confirm", requireAdmin, async (req, res) => {
     try {

@@ -119,6 +119,15 @@ try {
 try {
   sqlite.exec(`ALTER TABLE orders ADD COLUMN proxnum_id TEXT`);
 } catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN circle_wallet_id TEXT`);
+} catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN circle_wallet_address TEXT`);
+} catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE crypto_deposits ADD COLUMN circle_transfer_id TEXT`);
+} catch (e) {}
 
 function seedSettings() {
   const defaults: Record<string, string> = {
@@ -166,6 +175,7 @@ export interface IStorage {
   updateUserBalance(userId: number, balance: string): Promise<void>;
   updateUserPassword(userId: number, password: string): Promise<void>;
   generateApiKey(userId: number): Promise<string>;
+  updateUserCircleWallet(userId: number, walletId: string, walletAddress: string): Promise<void>;
   getAllUsers(): Promise<User[]>;
 
   getAllServices(): Promise<Service[]>;
@@ -249,6 +259,10 @@ export class DatabaseStorage implements IStorage {
     const apiKey = crypto.randomBytes(32).toString("hex");
     db.update(users).set({ apiKey }).where(eq(users.id, userId)).run();
     return apiKey;
+  }
+
+  async updateUserCircleWallet(userId: number, walletId: string, walletAddress: string): Promise<void> {
+    db.update(users).set({ circleWalletId: walletId, circleWalletAddress: walletAddress }).where(eq(users.id, userId)).run();
   }
 
   async getAllUsers(): Promise<User[]> {

@@ -10,9 +10,11 @@ export const users = sqliteTable("users", {
   balance: text("balance").notNull().default("0.00"),
   apiKey: text("api_key").unique(),
   role: text("role").notNull().default("user"),
+  circleWalletId: text("circle_wallet_id"),
+  circleWalletAddress: text("circle_wallet_address"),
 });
 
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, balance: true, apiKey: true, role: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, balance: true, apiKey: true, role: true, circleWalletId: true, circleWalletAddress: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
