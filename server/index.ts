@@ -14,15 +14,17 @@ declare module "http" {
 }
 
 // Security headers via helmet
+const isProduction = process.env.NODE_ENV === "production";
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        // 'unsafe-inline' and 'unsafe-eval' are required by Vite HMR in development
-        // and by the React/Three.js runtime. In a future hardening step, replace
-        // with nonce-based CSP once the frontend build pipeline supports it.
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        // Production: disallow unsafe-eval; Vite dev HMR and Three.js require it in development only.
+        // TODO: migrate to nonce-based CSP once the production build supports it.
+        scriptSrc: isProduction
+          ? ["'self'", "'unsafe-inline'"]
+          : ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "https:"],
         connectSrc: ["'self'"],

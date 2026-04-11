@@ -254,8 +254,16 @@ export async function registerRoutes(
       if (atIndex < 1 || atIndex !== email.lastIndexOf("@")) {
         return res.status(400).json({ message: "Invalid email format" });
       }
+      const localPart = email.slice(0, atIndex);
       const domain = email.slice(atIndex + 1);
-      if (!domain.includes(".") || domain.startsWith(".") || domain.endsWith(".")) {
+      // Local part and domain must not start/end with dots or have consecutive dots
+      if (
+        !domain.includes(".") ||
+        domain.startsWith(".") || domain.endsWith(".") ||
+        domain.includes("..") ||
+        localPart.startsWith(".") || localPart.endsWith(".") ||
+        localPart.includes("..")
+      ) {
         return res.status(400).json({ message: "Invalid email format" });
       }
 
@@ -848,9 +856,12 @@ export async function registerRoutes(
       if (!txHash || typeof txHash !== "string") {
         return res.status(400).json({ message: "Transaction hash is required" });
       }
-      // Validate txHash: exactly 64 hex chars (Bitcoin, Ethereum, Tron, Litecoin all use 32-byte/64-char hashes)
-      if (!/^[a-fA-F0-9]{64}$/.test(txHash)) {
-        return res.status(400).json({ message: "Invalid transaction hash format (must be 64 hex characters)" });
+      // Validate txHash: 64 hex chars for BTC/LTC/TRC20, or 0x + 64 hex chars for ERC20/ETH
+      const normalizedHash = txHash.startsWith("0x") || txHash.startsWith("0X")
+        ? txHash.slice(2)
+        : txHash;
+      if (!/^[a-fA-F0-9]{64}$/.test(normalizedHash)) {
+        return res.status(400).json({ message: "Invalid transaction hash format (expected 64 hex characters, optionally 0x-prefixed)" });
       }
       const deposit = await storage.getCryptoDeposit(Number(req.params.id));
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
@@ -968,14 +979,30 @@ export async function registerRoutes(
       // Whitelist allowed fields to prevent mass assignment
       const { name, price, icon, category, isActive } = req.body;
       const allowedFields: Record<string, any> = {};
-      if (name !== undefined) allowedFields.name = String(name).replace(/<[^>]*>/g, "").slice(0, 100);
+
+      // Reject inputs containing HTML/script characters rather than attempting to strip them
+      const containsHtml = (v: string) => v.includes("<") || v.includes(">");
+
+      if (name !== undefined) {
+        const n = String(name).slice(0, 100);
+        if (containsHtml(n)) return res.status(400).json({ message: "Service name must not contain HTML" });
+        allowedFields.name = n;
+      }
       if (price !== undefined) {
         const p = parseFloat(price);
         if (isNaN(p) || p < 0) return res.status(400).json({ message: "Invalid price" });
         allowedFields.price = p.toFixed(2);
       }
-      if (icon !== undefined) allowedFields.icon = icon ? String(icon).replace(/<[^>]*>/g, "").slice(0, 200) : null;
-      if (category !== undefined) allowedFields.category = category ? String(category).replace(/<[^>]*>/g, "").slice(0, 50) : null;
+      if (icon !== undefined) {
+        const ic = icon ? String(icon).slice(0, 200) : null;
+        if (ic && containsHtml(ic)) return res.status(400).json({ message: "Icon must not contain HTML" });
+        allowedFields.icon = ic;
+      }
+      if (category !== undefined) {
+        const cat = category ? String(category).slice(0, 50) : null;
+        if (cat && containsHtml(cat)) return res.status(400).json({ message: "Category must not contain HTML" });
+        allowedFields.category = cat;
+      }
       if (isActive !== undefined) allowedFields.isActive = isActive ? 1 : 0;
       await storage.updateService(Number(req.params.id), allowedFields);
       res.json({ message: "Service updated" });
@@ -1069,7 +1096,7 @@ export async function registerRoutes(
   async function requireApiKey(req: Request, res: Response, next: any) {
     // Only accept API key from header; query string keys leak into logs/referrers
     const key = req.headers["x-api-key"] as string;
-    if (!key) return res.status(401).json({ error: "API key required (use X-Api-Key header)" });
+    if (!key) return res.status(401).json({ error: "API key required (use x-api-key header)" });
     const user = await storage.getUserByApiKey(key);
     if (!user) return res.status(401).json({ error: "Invalid API key" });
     (req as any).apiUser = user;
