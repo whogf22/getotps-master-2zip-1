@@ -235,24 +235,13 @@ export default function AddFunds() {
               </CardContent>
             </Card>
 
-            {circleConfig?.configured && depositMethod === "circle" && circleWallet?.hasWallet && (
+            {!circleConfig?.configured && depositMethod === "circle" && (
               <div className="flex justify-end">
                 <button
                   onClick={() => setDepositMethod("manual")}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
                 >
                   Use manual crypto deposit instead
-                </button>
-              </div>
-            )}
-
-            {depositMethod === "manual" && circleConfig?.configured && (
-              <div className="flex justify-end">
-                <button
-                  onClick={() => setDepositMethod("circle")}
-                  className="text-xs text-blue-500 hover:text-blue-400 transition-colors underline underline-offset-2"
-                >
-                  Switch to Circle USDC wallet
                 </button>
               </div>
             )}
@@ -362,7 +351,7 @@ export default function AddFunds() {
               </Card>
             )}
 
-            {depositMethod === "manual" && (
+            {depositMethod === "manual" && !circleConfig?.configured && (
               <>
                 {activeDeposit && activeDeposit.status !== "completed" && (
                   <Card className="border-primary/30 bg-primary/5">

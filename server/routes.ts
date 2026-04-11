@@ -990,6 +990,9 @@ export async function registerRoutes(
   });
 
   app.get("/api/crypto/currencies", requireAuth, (_req, res) => {
+    if (circle.isCircleConfigured()) {
+      return res.json([]);
+    }
     const currencies = Object.entries(CRYPTO_WALLETS).map(([key, address]) => ({
       id: key,
       name: key === "USDT_TRC20" ? "USDT (TRC20)" : key === "USDT_ERC20" ? "USDT (ERC20)" : key,
@@ -1001,6 +1004,9 @@ export async function registerRoutes(
   });
 
   app.post("/api/crypto/create-deposit", requireAuth, async (req, res) => {
+    if (circle.isCircleConfigured()) {
+      return res.status(400).json({ message: "Manual deposits are disabled. Use Circle USDC wallet instead." });
+    }
     try {
       const user = req.user as any;
       const { currency, amount } = req.body;
@@ -1028,6 +1034,9 @@ export async function registerRoutes(
   });
 
   app.post("/api/crypto/:id/submit-hash", requireAuth, async (req, res) => {
+    if (circle.isCircleConfigured()) {
+      return res.status(400).json({ message: "Manual deposits are disabled. Use Circle USDC wallet instead." });
+    }
     try {
       const user = req.user as any;
       const { txHash } = req.body;
@@ -1580,7 +1589,7 @@ export async function registerRoutes(
 
   if (circle.isCircleConfigured()) {
     const CIRCLE_POLL_INTERVAL_MS = 2 * 60 * 1000;
-    async function pollCircleDeposits() {
+    const pollCircleDeposits = async () => {
       try {
         const allUsers = await storage.getAllUsers();
         const usersWithWallets = allUsers.filter(u => u.circleWalletId);
@@ -1645,7 +1654,7 @@ export async function registerRoutes(
       } catch (pollErr) {
         console.error("Circle background poll error:", pollErr);
       }
-    }
+    };
 
     setInterval(pollCircleDeposits, CIRCLE_POLL_INTERVAL_MS);
     console.log("Circle deposit polling started (every 2 minutes)");
