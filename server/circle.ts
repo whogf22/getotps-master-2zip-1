@@ -1,4 +1,8 @@
-import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import {
+  initiateDeveloperControlledWalletsClient,
+  type Blockchain,
+  type Transaction as CircleSdkTransaction,
+} from "@circle-fin/developer-controlled-wallets";
 import { v4 as uuidv4 } from "uuid";
 
 const CIRCLE_API_KEY = process.env.CIRCLE_API_KEY || "";
@@ -47,7 +51,7 @@ export async function getOrCreateDefaultWalletSet(): Promise<string> {
   return newSet.id;
 }
 
-export async function createUserWallet(walletSetId: string, blockchain: string = "ETH"): Promise<{
+export async function createUserWallet(walletSetId: string, blockchain: Blockchain = "ETH"): Promise<{
   walletId: string;
   address: string;
   blockchain: string;
@@ -55,7 +59,7 @@ export async function createUserWallet(walletSetId: string, blockchain: string =
   const client = getClient();
   const response = await client.createWallets({
     idempotencyKey: uuidv4(),
-    blockchains: [blockchain as any],
+    blockchains: [blockchain],
     count: 1,
     walletSetId,
   });
@@ -71,23 +75,27 @@ export async function createUserWallet(walletSetId: string, blockchain: string =
   };
 }
 
+export interface TokenBalance {
+  amount: string;
+  tokenId: string;
+  tokenName: string;
+  tokenSymbol: string;
+  tokenAddress: string;
+}
+
 export async function getWalletBalance(walletId: string): Promise<{
-  balances: Array<{
-    amount: string;
-    tokenSymbol: string;
-    tokenName: string;
-    tokenAddress: string;
-  }>;
+  balances: TokenBalance[];
 }> {
   const client = getClient();
   const response = await client.getWalletTokenBalance({ id: walletId });
   const tokenBalances = response.data?.tokenBalances || [];
   return {
-    balances: tokenBalances.map((tb: any) => ({
+    balances: tokenBalances.map((tb) => ({
       amount: tb.amount || "0",
-      tokenSymbol: tb.token?.symbol || "",
+      tokenId: tb.token?.id || "",
       tokenName: tb.token?.name || "",
-      tokenAddress: tb.token?.tokenAddress || "",
+      tokenSymbol: String(tb.token?.symbol || ""),
+      tokenAddress: String(tb.token?.tokenAddress || ""),
     })),
   };
 }
@@ -98,8 +106,6 @@ export interface CircleTransaction {
   state: string;
   amounts: string[];
   tokenId: string;
-  tokenName: string;
-  tokenSymbol: string;
   sourceAddress: string;
   destinationAddress: string;
   txHash: string;
@@ -112,21 +118,40 @@ export async function listWalletTransactions(walletId: string): Promise<CircleTr
   const response = await client.listTransactions({
     walletIds: [walletId],
   });
-  const transactions = response.data?.transactions || [];
-  return transactions.map((tx: any) => ({
-    id: tx.id || "",
+  const transactions: CircleSdkTransaction[] = response.data?.transactions || [];
+  return transactions.map((tx) => ({
+    id: tx.id,
     type: tx.transactionType || "",
     state: tx.state || "",
     amounts: tx.amounts || [],
     tokenId: tx.tokenId || "",
-    tokenName: tx.token?.name || "",
-    tokenSymbol: tx.token?.symbol || "",
     sourceAddress: tx.sourceAddress || "",
     destinationAddress: tx.destinationAddress || "",
     txHash: tx.txHash || "",
     createDate: tx.createDate || "",
     blockchain: tx.blockchain || "",
   }));
+}
+
+export async function getTokenInfo(tokenId: string): Promise<{
+  name: string;
+  symbol: string;
+  blockchain: string;
+} | null> {
+  if (!tokenId) return null;
+  try {
+    const client = getClient();
+    const response = await client.getToken({ id: tokenId });
+    const token = response.data?.token;
+    if (!token) return null;
+    return {
+      name: token.name || "",
+      symbol: String(token.symbol || ""),
+      blockchain: token.blockchain || "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function getWallet(walletId: string): Promise<{

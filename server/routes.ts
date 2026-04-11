@@ -901,11 +901,22 @@ export async function registerRoutes(
       }
 
       const txList = await circle.listWalletTransactions(freshUser.circleWalletId);
-      const inboundUsdc = txList.filter(tx =>
-        tx.type === "INBOUND" &&
-        tx.state === "CONFIRMED" &&
-        (tx.tokenSymbol === "USDC" || tx.tokenName?.includes("USDC") || tx.tokenName?.includes("USD Coin"))
+      const inboundConfirmed = txList.filter(tx =>
+        tx.type === "INBOUND" && tx.state === "CONFIRMED"
       );
+
+      const tokenCache = new Map<string, { name: string; symbol: string } | null>();
+      const inboundUsdc: circle.CircleTransaction[] = [];
+      for (const tx of inboundConfirmed) {
+        if (!tx.tokenId) continue;
+        if (!tokenCache.has(tx.tokenId)) {
+          tokenCache.set(tx.tokenId, await circle.getTokenInfo(tx.tokenId));
+        }
+        const tokenInfo = tokenCache.get(tx.tokenId);
+        if (tokenInfo && (tokenInfo.symbol === "USDC" || tokenInfo.name.includes("USDC") || tokenInfo.name.includes("USD Coin"))) {
+          inboundUsdc.push(tx);
+        }
+      }
 
       const existingDeposits = await storage.getUserCryptoDeposits(freshUser.id);
       const recordedTransferIds = new Set(
@@ -925,8 +936,9 @@ export async function registerRoutes(
           continue;
         }
 
-        const usdAmount = parseFloat(tx.amounts[0] || "0");
-        if (usdAmount <= 0) continue;
+        const rawAmount = Array.isArray(tx.amounts) && tx.amounts.length > 0 ? String(tx.amounts[0]) : "0";
+        const usdAmount = parseFloat(rawAmount);
+        if (isNaN(usdAmount) || usdAmount <= 0) continue;
 
         const now = new Date().toISOString();
         const wasInserted = await storage.creditCircleDeposit(
@@ -934,7 +946,7 @@ export async function registerRoutes(
             userId: freshUser.id,
             currency: "USDC",
             amount: usdAmount.toFixed(2),
-            cryptoAmount: tx.amounts[0],
+            cryptoAmount: rawAmount,
             walletAddress: freshUser.circleWalletAddress || "",
             txHash: tx.txHash || null,
             circleTransferId: tx.id,
@@ -1565,6 +1577,79 @@ export async function registerRoutes(
   }).catch(err => {
     console.error("Proxnum initial sync failed:", err);
   });
+
+  if (circle.isCircleConfigured()) {
+    const CIRCLE_POLL_INTERVAL_MS = 2 * 60 * 1000;
+    async function pollCircleDeposits() {
+      try {
+        const allUsers = await storage.getAllUsers();
+        const usersWithWallets = allUsers.filter(u => u.circleWalletId);
+
+        for (const user of usersWithWallets) {
+          try {
+            const txList = await circle.listWalletTransactions(user.circleWalletId!);
+            const inboundConfirmed = txList.filter(tx =>
+              tx.type === "INBOUND" && tx.state === "CONFIRMED"
+            );
+
+            const tokenCache = new Map<string, { name: string; symbol: string } | null>();
+            for (const tx of inboundConfirmed) {
+              if (!tx.tokenId) continue;
+              if (!tokenCache.has(tx.tokenId)) {
+                tokenCache.set(tx.tokenId, await circle.getTokenInfo(tx.tokenId));
+              }
+              const tokenInfo = tokenCache.get(tx.tokenId);
+              const isUsdc = tokenInfo && (
+                tokenInfo.symbol === "USDC" ||
+                tokenInfo.name.includes("USDC") ||
+                tokenInfo.name.includes("USD Coin")
+              );
+              if (!isUsdc) continue;
+
+              const rawAmount = Array.isArray(tx.amounts) && tx.amounts.length > 0 ? String(tx.amounts[0]) : "0";
+              const usdAmount = parseFloat(rawAmount);
+              if (isNaN(usdAmount) || usdAmount <= 0) continue;
+
+              const now = new Date().toISOString();
+              await storage.creditCircleDeposit(
+                {
+                  userId: user.id,
+                  currency: "USDC",
+                  amount: usdAmount.toFixed(2),
+                  cryptoAmount: rawAmount,
+                  walletAddress: user.circleWalletAddress || "",
+                  txHash: tx.txHash || null,
+                  circleTransferId: tx.id,
+                  status: "completed",
+                  createdAt: tx.createDate || now,
+                  expiresAt: now,
+                  completedAt: now,
+                },
+                {
+                  userId: user.id,
+                  type: "deposit",
+                  amount: usdAmount.toFixed(2),
+                  description: `USDC deposit via Circle wallet (auto-detected)`,
+                  orderId: null,
+                  stripeSessionId: null,
+                  createdAt: now,
+                },
+                user.id,
+                usdAmount.toFixed(2)
+              );
+            }
+          } catch (userErr) {
+            console.error(`Circle poll error for user ${user.id}:`, userErr);
+          }
+        }
+      } catch (pollErr) {
+        console.error("Circle background poll error:", pollErr);
+      }
+    }
+
+    setInterval(pollCircleDeposits, CIRCLE_POLL_INTERVAL_MS);
+    console.log("Circle deposit polling started (every 2 minutes)");
+  }
 
   return httpServer;
 }

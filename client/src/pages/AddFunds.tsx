@@ -24,8 +24,8 @@ import {
   Wallet,
   RefreshCw,
   Shield,
-  QrCode,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 
 type CircleWallet = {
   hasWallet: boolean;
@@ -319,19 +319,29 @@ export default function AddFunds() {
                         </div>
                       </div>
 
-                      <div className="bg-blue-500/5 rounded-lg border border-blue-500/20 p-3">
-                        <div className="flex items-start gap-2">
-                          <QrCode className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-                          <div className="text-xs text-muted-foreground space-y-1">
-                            <p className="font-semibold text-foreground">How to deposit:</p>
-                            <ol className="list-decimal list-inside space-y-0.5">
-                              <li>Send <span className="font-semibold text-blue-500">USDC</span> to the address above</li>
-                              <li>Use the <span className="font-semibold">Ethereum network</span> only</li>
-                              <li>Click "Check for Deposits" once your transaction confirms</li>
-                              <li>Your balance will be credited automatically</li>
-                            </ol>
-                            <p className="text-yellow-500 mt-2">Only send USDC on Ethereum. Other tokens or networks will result in lost funds.</p>
+                      {circleWallet.address && (
+                        <div className="flex justify-center py-2">
+                          <div className="bg-white p-3 rounded-lg">
+                            <QRCodeSVG
+                              value={circleWallet.address}
+                              size={160}
+                              level="M"
+                              includeMargin={false}
+                            />
                           </div>
+                        </div>
+                      )}
+
+                      <div className="bg-blue-500/5 rounded-lg border border-blue-500/20 p-3">
+                        <div className="text-xs text-muted-foreground space-y-1">
+                          <p className="font-semibold text-foreground">How to deposit:</p>
+                          <ol className="list-decimal list-inside space-y-0.5">
+                            <li>Scan the QR code or copy the address above</li>
+                            <li>Send <span className="font-semibold text-blue-500">USDC</span> on the <span className="font-semibold">Ethereum network</span></li>
+                            <li>Deposits are detected automatically every 2 minutes</li>
+                            <li>Or click "Check for Deposits" to check immediately</li>
+                          </ol>
+                          <p className="text-yellow-500 mt-2">Only send USDC on Ethereum. Other tokens or networks will result in lost funds.</p>
                         </div>
                       </div>
 
