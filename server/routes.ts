@@ -6,6 +6,7 @@ import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcryptjs";
+import rateLimit from "express-rate-limit";
 
 declare module "express-session" {
   interface SessionData {
@@ -45,6 +46,12 @@ async function calculatePrice(basePrice: number, service: string, country: strin
   const globalMult = await getMarkupMultiplier();
   const serviceMult = await getServiceMultiplier(service, country);
   return basePrice * globalMult * serviceMult;
+}
+
+/** Returns a safe error message — hides implementation details in production */
+function safeError(err: any, fallback = "An unexpected error occurred"): string {
+  if (process.env.NODE_ENV !== "production") return err?.message || fallback;
+  return fallback;
 }
 
 function extractOTPFromText(text: string): string | null {
@@ -142,12 +149,54 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (!process.env.SESSION_SECRET) {
+    if (isProduction) {
+      throw new Error("SESSION_SECRET environment variable must be set in production");
+    }
+    console.warn("[SECURITY WARNING] SESSION_SECRET not set. Using insecure default for development only.");
+  }
+
+  // Rate limiters — login is stricter to mitigate brute-force, registration slightly more permissive
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many login attempts, please try again later" },
+  });
+
+  const registerLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many registration attempts, please try again later" },
+  });
+
+  const apiKeyLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      return (req.headers["x-api-key"] as string) || req.ip || "unknown";
+    },
+    message: { error: "Rate limit exceeded" },
+  });
+
   app.use(
     session({
-      secret: process.env.SESSION_SECRET || "getotps-secret-key-2024",
+      secret: process.env.SESSION_SECRET || "dev-only-secret-change-in-production",
       resave: false,
       saveUninitialized: false,
-      cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 },
+      cookie: {
+        secure: isProduction,
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      },
     })
   );
 
@@ -190,38 +239,70 @@ export async function registerRoutes(
 
   // ========== AUTH ROUTES ==========
 
-  app.post("/api/auth/register", async (req, res) => {
+  app.post("/api/auth/register", registerLimiter, async (req, res) => {
     try {
       const { username, email, password } = req.body;
       if (!username || !email || !password) {
         return res.status(400).json({ message: "All fields required" });
       }
+
+      // Validate email: cap length first to prevent ReDoS, then check structural validity
+      if (typeof email !== "string" || email.length > 254) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+      const atIndex = email.indexOf("@");
+      if (atIndex < 1 || atIndex !== email.lastIndexOf("@")) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+      const domain = email.slice(atIndex + 1);
+      if (!domain.includes(".") || domain.startsWith(".") || domain.endsWith(".")) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+
+      // Validate username (alphanumeric + underscore, 3-32 chars)
+      const usernameRegex = /^[a-zA-Z0-9_]{3,32}$/;
+      if (!usernameRegex.test(username)) {
+        return res.status(400).json({ message: "Username must be 3-32 characters (letters, numbers, underscores only)" });
+      }
+
+      // Enforce password strength
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
+      }
+
       const existing = await storage.getUserByEmail(email);
       if (existing) return res.status(400).json({ message: "Email already registered" });
       const existingUsername = await storage.getUserByUsername(username);
       if (existingUsername) return res.status(400).json({ message: "Username already taken" });
 
-      const hashedPassword = await bcrypt.hash(password, 10);
+      const hashedPassword = await bcrypt.hash(password, 12);
       const user = await storage.createUser({ username, email, password: hashedPassword });
 
-      req.login(user, (err) => {
-        if (err) return res.status(500).json({ message: "Login failed after registration" });
-        const { password: _, ...safeUser } = user;
-        res.json(safeUser);
+      req.session.regenerate((err) => {
+        if (err) return res.status(500).json({ message: "Session error" });
+        req.login(user, (loginErr) => {
+          if (loginErr) return res.status(500).json({ message: "Login failed after registration" });
+          const { password: _, ...safeUser } = user;
+          res.json(safeUser);
+        });
       });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: "Registration failed" });
     }
   });
 
-  app.post("/api/auth/login", (req, res, next) => {
+  app.post("/api/auth/login", loginLimiter, (req, res, next) => {
     passport.authenticate("local", (err: any, user: any, info: any) => {
-      if (err) return res.status(500).json({ message: err.message });
+      if (err) return res.status(500).json({ message: "Authentication error" });
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
-      req.login(user, (loginErr) => {
-        if (loginErr) return res.status(500).json({ message: "Login failed" });
-        const { password: _, ...safeUser } = user;
-        res.json(safeUser);
+      // Regenerate session to prevent session fixation
+      req.session.regenerate((regenerateErr) => {
+        if (regenerateErr) return res.status(500).json({ message: "Session error" });
+        req.login(user, (loginErr) => {
+          if (loginErr) return res.status(500).json({ message: "Login failed" });
+          const { password: _, ...safeUser } = user;
+          res.json(safeUser);
+        });
       });
     })(req, res, next);
   });
@@ -256,7 +337,7 @@ export async function registerRoutes(
       const countries = await getCachedCountries();
       res.json(countries);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -269,7 +350,7 @@ export async function registerRoutes(
       );
       res.json(prices);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -365,7 +446,7 @@ export async function registerRoutes(
       res.json({ ...order, service });
     } catch (err: any) {
       console.error("Order error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -455,7 +536,7 @@ export async function registerRoutes(
       res.json({ status: "pending", messages: [], otpCode: null });
     } catch (err: any) {
       console.error("Check SMS error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -498,7 +579,7 @@ export async function registerRoutes(
 
       res.json({ message: "Order cancelled and refunded" });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -534,7 +615,7 @@ export async function registerRoutes(
       res.json({ message: "Resend requested successfully", activation: newActivation });
     } catch (err: any) {
       console.error("Resend error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -627,7 +708,7 @@ export async function registerRoutes(
       res.json(rental);
     } catch (err: any) {
       console.error("Rental error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -687,7 +768,7 @@ export async function registerRoutes(
       const messages = await storage.getRentalMessages(rental.id);
       res.json(messages);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -710,7 +791,7 @@ export async function registerRoutes(
       await storage.cancelRental(rental.id);
       res.json({ message: "Rental cancelled" });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -752,7 +833,7 @@ export async function registerRoutes(
         createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
       });
       res.json(deposit);
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.get("/api/crypto/deposits", requireAuth, async (req, res) => {
@@ -764,38 +845,23 @@ export async function registerRoutes(
     try {
       const user = req.user as any;
       const { txHash } = req.body;
-      if (!txHash) return res.status(400).json({ message: "Transaction hash is required" });
+      if (!txHash || typeof txHash !== "string") {
+        return res.status(400).json({ message: "Transaction hash is required" });
+      }
+      // Validate txHash: exactly 64 hex chars (Bitcoin, Ethereum, Tron, Litecoin all use 32-byte/64-char hashes)
+      if (!/^[a-fA-F0-9]{64}$/.test(txHash)) {
+        return res.status(400).json({ message: "Invalid transaction hash format (must be 64 hex characters)" });
+      }
       const deposit = await storage.getCryptoDeposit(Number(req.params.id));
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
       if (deposit.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (deposit.status !== "pending") return res.status(400).json({ message: "Deposit is not pending" });
       await storage.updateCryptoDeposit(deposit.id, { txHash, status: "confirming" });
-      res.json({ message: "Transaction hash submitted. Awaiting confirmation." });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+      res.json({ message: "Transaction hash submitted. Awaiting admin confirmation." });
+    } catch (err: any) { res.status(500).json({ message: "Submission failed" }); }
   });
 
-  app.post("/api/crypto/:id/simulate-confirm", requireAuth, async (req, res) => {
-    try {
-      const user = req.user as any;
-      const deposit = await storage.getCryptoDeposit(Number(req.params.id));
-      if (!deposit) return res.status(404).json({ message: "Deposit not found" });
-      if (deposit.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
-      if (deposit.status !== "confirming") return res.status(400).json({ message: "Deposit must be in confirming state" });
-      const now = new Date().toISOString();
-      await storage.updateCryptoDeposit(deposit.id, { status: "completed", completedAt: now });
-      const freshUser = await storage.getUser(user.id);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(deposit.amount)).toFixed(2);
-        await storage.updateUserBalance(user.id, newBalance);
-        await storage.createTransaction({
-          userId: user.id, type: "deposit", amount: deposit.amount,
-          description: `Crypto deposit (${deposit.currency}) confirmed`,
-          orderId: null, stripeSessionId: null, createdAt: now,
-        });
-      }
-      res.json({ message: "Deposit confirmed", newBalance: (parseFloat(freshUser!.balance) + parseFloat(deposit.amount)).toFixed(2) });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
-  });
+  // NOTE: Self-confirmation endpoint removed — only admins can confirm deposits via /api/admin/crypto/:id/confirm
 
   app.post("/api/admin/crypto/:id/confirm", requireAdmin, async (req, res) => {
     try {
@@ -815,7 +881,7 @@ export async function registerRoutes(
         });
       }
       res.json({ message: "Deposit confirmed and balance credited" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.get("/api/admin/crypto/pending", requireAdmin, async (_req, res) => {
@@ -899,9 +965,21 @@ export async function registerRoutes(
 
   app.put("/api/admin/services/:id", requireAdmin, async (req, res) => {
     try {
-      await storage.updateService(Number(req.params.id), req.body);
+      // Whitelist allowed fields to prevent mass assignment
+      const { name, price, icon, category, isActive } = req.body;
+      const allowedFields: Record<string, any> = {};
+      if (name !== undefined) allowedFields.name = String(name).replace(/<[^>]*>/g, "").slice(0, 100);
+      if (price !== undefined) {
+        const p = parseFloat(price);
+        if (isNaN(p) || p < 0) return res.status(400).json({ message: "Invalid price" });
+        allowedFields.price = p.toFixed(2);
+      }
+      if (icon !== undefined) allowedFields.icon = icon ? String(icon).replace(/<[^>]*>/g, "").slice(0, 200) : null;
+      if (category !== undefined) allowedFields.category = category ? String(category).replace(/<[^>]*>/g, "").slice(0, 50) : null;
+      if (isActive !== undefined) allowedFields.isActive = isActive ? 1 : 0;
+      await storage.updateService(Number(req.params.id), allowedFields);
       res.json({ message: "Service updated" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: "Service update failed" }); }
   });
 
   app.get("/api/admin/settings", requireAdmin, async (_req, res) => {
@@ -937,7 +1015,7 @@ export async function registerRoutes(
         }
       }
       res.json({ message: "Settings updated" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/admin/users/:id/add-balance", requireAdmin, async (req, res) => {
@@ -960,7 +1038,7 @@ export async function registerRoutes(
         createdAt: new Date().toISOString(),
       });
       res.json({ message: "Balance updated", newBalance });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/admin/crypto/:id/reject", requireAdmin, async (req, res) => {
@@ -970,7 +1048,7 @@ export async function registerRoutes(
       if (deposit.status === "completed") return res.status(400).json({ message: "Cannot reject completed deposit" });
       await storage.updateCryptoDeposit(deposit.id, { status: "rejected", completedAt: new Date().toISOString() });
       res.json({ message: "Deposit rejected" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.get("/api/admin/transactions", requireAdmin, async (_req, res) => {
@@ -983,14 +1061,15 @@ export async function registerRoutes(
       }
       txns.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       res.json(txns.slice(0, 100));
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   // ========== API v1 (API key auth) ==========
 
   async function requireApiKey(req: Request, res: Response, next: any) {
-    const key = req.headers["x-api-key"] as string || req.query.api_key as string;
-    if (!key) return res.status(401).json({ error: "API key required" });
+    // Only accept API key from header; query string keys leak into logs/referrers
+    const key = req.headers["x-api-key"] as string;
+    if (!key) return res.status(401).json({ error: "API key required (use X-Api-Key header)" });
     const user = await storage.getUserByApiKey(key);
     if (!user) return res.status(401).json({ error: "Invalid API key" });
     (req as any).apiUser = user;
@@ -1002,12 +1081,12 @@ export async function registerRoutes(
     res.json({ services: allServices });
   });
 
-  app.get("/api/v1/balance", requireApiKey, async (req, res) => {
+  app.get("/api/v1/balance", apiKeyLimiter, requireApiKey, async (req, res) => {
     const user = (req as any).apiUser;
     res.json({ balance: user.balance });
   });
 
-  app.post("/api/v1/order", requireApiKey, async (req, res) => {
+  app.post("/api/v1/order", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
       const { service, country } = req.body;
@@ -1068,10 +1147,10 @@ export async function registerRoutes(
       });
 
       res.json({ orderId: order.id, phoneNumber: formattedPhone, status: "pending", expiresAt: order.expiresAt });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
-  app.get("/api/v1/order/:id", requireApiKey, async (req, res) => {
+  app.get("/api/v1/order/:id", apiKeyLimiter, requireApiKey, async (req, res) => {
     const user = (req as any).apiUser;
     const order = await storage.getOrder(Number(req.params.id));
     if (!order) return res.status(404).json({ error: "Order not found" });
@@ -1122,7 +1201,7 @@ export async function registerRoutes(
     });
   });
 
-  app.post("/api/v1/order/:id/cancel", requireApiKey, async (req, res) => {
+  app.post("/api/v1/order/:id/cancel", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
       const order = await storage.getOrder(Number(req.params.id));
@@ -1147,10 +1226,10 @@ export async function registerRoutes(
         await storage.updateUserBalance(user.id, newBalance);
       }
       res.json({ message: "Order cancelled and refunded" });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
-  app.get("/api/v1/price", requireApiKey, async (req, res) => {
+  app.get("/api/v1/price", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
       const { service, country } = req.query;
       if (!service || !country) return res.status(400).json({ error: "service and country required" });
@@ -1159,10 +1238,10 @@ export async function registerRoutes(
         return res.status(400).json({ error: friendlyError(pnResult) });
       }
       res.json(pnResult);
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
-  app.post("/api/v1/order/:id/resend", requireApiKey, async (req, res) => {
+  app.post("/api/v1/order/:id/resend", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
       const order = await storage.getOrder(Number(req.params.id));
@@ -1187,10 +1266,10 @@ export async function registerRoutes(
       }
 
       res.json({ message: "Resend requested successfully", activation: newActivation });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
-  app.post("/api/v1/rental", requireApiKey, async (req, res) => {
+  app.post("/api/v1/rental", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
       const { service, country, days } = req.body;
@@ -1243,7 +1322,7 @@ export async function registerRoutes(
       });
 
       res.json({ rentalId: rental.id, phoneNumber: formattedPhone, status: "active", expiresAt: rental.expiresAt });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
   // Profile
@@ -1256,14 +1335,20 @@ export async function registerRoutes(
     try {
       const user = req.user as any;
       const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current and new passwords are required" });
+      }
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: "New password must be at least 8 characters" });
+      }
       const freshUser = await storage.getUser(user.id);
       if (!freshUser) return res.status(404).json({ message: "User not found" });
       const isValid = await bcrypt.compare(currentPassword, freshUser.password);
       if (!isValid) return res.status(400).json({ message: "Current password is incorrect" });
-      const hashed = await bcrypt.hash(newPassword, 10);
+      const hashed = await bcrypt.hash(newPassword, 12);
       await storage.updateUserPassword(user.id, hashed);
       res.json({ message: "Password updated" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: "Password update failed" }); }
   });
 
   // Proxnum balance endpoint
@@ -1272,7 +1357,7 @@ export async function registerRoutes(
       const result = await proxnumApi.getUserBalance();
       res.json(result.data || result);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
