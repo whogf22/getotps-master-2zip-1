@@ -235,29 +235,24 @@ export default function AddFunds() {
               </CardContent>
             </Card>
 
-            {circleConfig?.configured && (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setDepositMethod("circle")}
-                  className={`flex-1 p-3 rounded-lg border text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
-                    depositMethod === "circle"
-                      ? "border-blue-500 bg-blue-500/10 text-blue-500 ring-1 ring-blue-500/20"
-                      : "border-border hover:border-blue-500/40 text-muted-foreground"
-                  }`}
-                >
-                  <Shield className="w-4 h-4" />
-                  Circle Wallet (USDC)
-                </button>
+            {circleConfig?.configured && depositMethod === "circle" && circleWallet?.hasWallet && (
+              <div className="flex justify-end">
                 <button
                   onClick={() => setDepositMethod("manual")}
-                  className={`flex-1 p-3 rounded-lg border text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
-                    depositMethod === "manual"
-                      ? "border-primary bg-primary/10 text-primary ring-1 ring-primary/20"
-                      : "border-border hover:border-primary/40 text-muted-foreground"
-                  }`}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
                 >
-                  <Wallet className="w-4 h-4" />
-                  Manual Crypto
+                  Use manual crypto deposit instead
+                </button>
+              </div>
+            )}
+
+            {depositMethod === "manual" && circleConfig?.configured && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setDepositMethod("circle")}
+                  className="text-xs text-blue-500 hover:text-blue-400 transition-colors underline underline-offset-2"
+                >
+                  Switch to Circle USDC wallet
                 </button>
               </div>
             )}

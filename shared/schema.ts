@@ -116,6 +116,7 @@ export const cryptoDeposits = sqliteTable("crypto_deposits", {
   cryptoAmount: text("crypto_amount"),
   walletAddress: text("wallet_address").notNull(),
   txHash: text("tx_hash"),
+  circleTransferId: text("circle_transfer_id"),
   status: text("status").notNull().default("pending"),
   createdAt: text("created_at").notNull(),
   expiresAt: text("expires_at").notNull(),

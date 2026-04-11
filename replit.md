@@ -33,9 +33,10 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 - **Service**: `server/circle.ts` — wraps Circle SDK (create wallet set, create wallet, get balance, list transactions)
 - **Env Vars**: `CIRCLE_API_KEY` (Circle API key) + `CIRCLE_ENTITY_SECRET` (32-byte entity secret)
 - **User Flow**: Each user gets a unique Ethereum wallet address for USDC deposits via Circle
-- **Auto-detection**: `POST /api/circle/check-deposits` polls Circle for inbound USDC transfers and auto-credits user balance
-- **Fallback**: When Circle is not configured, the Add Funds page falls back to manual crypto deposit (static wallets + admin confirmation)
-- **DB Fields**: `users.circle_wallet_id`, `users.circle_wallet_address` — stores per-user Circle wallet info
+- **Auto-detection**: `POST /api/circle/check-deposits` polls Circle for inbound USDC transfers, filters USDC-only by tokenSymbol/tokenName, deduplicates by circleTransferId+txHash, and auto-credits user balance
+- **Auto-wallet**: When Circle is configured, `GET /api/circle/wallet` auto-creates a wallet on first visit (no manual button needed)
+- **Fallback**: When Circle is not configured, the Add Funds page falls back to manual crypto deposit (static wallets + admin confirmation). Circle is the primary/default method when configured.
+- **DB Fields**: `users.circle_wallet_id`, `users.circle_wallet_address`, `crypto_deposits.circle_transfer_id` — stores per-user Circle wallet info and transfer dedup
 - **Endpoints**: `GET /api/circle/configured`, `GET /api/circle/wallet`, `POST /api/circle/wallet/create`, `POST /api/circle/check-deposits`
 
 ## Database Schema (SQLite)
@@ -62,7 +63,7 @@ client/src/
   pages/Landing.tsx          - Main landing page with GlowCard, Reveal, parallax hero
   pages/AdminDashboard.tsx   - Admin overview: stats, recent users, transactions
   pages/AdminUsers.tsx       - User management: search, list, add-balance modal
-  pages/AdminDeposits.tsx    - Pending crypto deposits: confirm/reject
+  pages/AdminDeposits.tsx    - All deposits: pending/all toggle, Circle auto-deposits with status badges
   pages/AdminSettings.tsx    - Platform settings: price multiplier, default country
   components/3d/
     HeroScene.tsx            - Full 3D scene (globe, hexgrid, streams, panels, particles)
@@ -89,7 +90,7 @@ shared/
 - **Rentals**: POST /api/rentals, GET /api/rentals/active, GET /:id/messages, POST /:id/cancel
 - **Circle Wallet**: GET /api/circle/configured, GET /wallet, POST /wallet/create, POST /check-deposits
 - **Crypto (Legacy)**: GET /api/crypto/currencies, POST /create-deposit, POST /:id/submit-hash
-- **Admin**: GET /api/admin/stats, /users, /transactions, PUT /services/:id, GET/PUT /settings, POST /users/:id/add-balance, POST /crypto/:id/confirm, POST /crypto/:id/reject, GET /crypto/pending
+- **Admin**: GET /api/admin/stats, /users, /transactions, PUT /services/:id, GET/PUT /settings, POST /users/:id/add-balance, POST /crypto/:id/confirm, POST /crypto/:id/reject, GET /crypto/pending, GET /crypto/all
 - **API v1**: GET /api/v1/services, GET /price, POST /order, GET /order/:id, POST /order/:id/cancel, POST /order/:id/resend, POST /rental
 
 ## Admin Panel

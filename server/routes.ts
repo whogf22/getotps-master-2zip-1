@@ -819,8 +819,19 @@ export async function registerRoutes(
   app.get("/api/circle/wallet", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
-      const freshUser = await storage.getUser(user.id);
+      let freshUser = await storage.getUser(user.id);
       if (!freshUser) return res.status(404).json({ message: "User not found" });
+
+      if (!freshUser.circleWalletId && circle.isCircleConfigured()) {
+        try {
+          const walletSetId = await circle.getOrCreateDefaultWalletSet();
+          const wallet = await circle.createUserWallet(walletSetId, "ETH");
+          await storage.updateUserCircleWallet(freshUser.id, wallet.walletId, wallet.address);
+          freshUser = (await storage.getUser(freshUser.id))!;
+        } catch (e) {
+          console.error("Auto-create Circle wallet failed:", e);
+        }
+      }
 
       if (freshUser.circleWalletId && freshUser.circleWalletAddress) {
         let balance = "0";
@@ -889,60 +900,76 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No Circle wallet found" });
       }
 
-      const transactions = await circle.listWalletTransactions(freshUser.circleWalletId);
-      const inboundTransfers = transactions.filter(
-        tx => tx.type === "INBOUND" && tx.state === "CONFIRMED"
+      const txList = await circle.listWalletTransactions(freshUser.circleWalletId);
+      const inboundUsdc = txList.filter(tx =>
+        tx.type === "INBOUND" &&
+        tx.state === "CONFIRMED" &&
+        (tx.tokenSymbol === "USDC" || tx.tokenName?.includes("USDC") || tx.tokenName?.includes("USD Coin"))
+      );
+
+      const existingDeposits = await storage.getUserCryptoDeposits(freshUser.id);
+      const recordedTransferIds = new Set(
+        existingDeposits
+          .map(d => d.circleTransferId)
+          .filter(Boolean)
+      );
+      const recordedTxHashes = new Set(
+        existingDeposits
+          .map(d => d.txHash)
+          .filter(Boolean)
       );
 
       let credited = 0;
-      for (const tx of inboundTransfers) {
-        const existingDeposits = await storage.getUserCryptoDeposits(freshUser.id);
-        const alreadyRecorded = existingDeposits.some(
-          d => d.txHash === tx.txHash || (d as any).circleTransferId === tx.id
-        );
-        if (alreadyRecorded) continue;
+      for (const tx of inboundUsdc) {
+        if (recordedTransferIds.has(tx.id) || (tx.txHash && recordedTxHashes.has(tx.txHash))) {
+          continue;
+        }
 
         const usdAmount = parseFloat(tx.amounts[0] || "0");
         if (usdAmount <= 0) continue;
 
         const now = new Date().toISOString();
-        await storage.createCryptoDeposit({
-          userId: freshUser.id,
-          currency: "USDC",
-          amount: usdAmount.toFixed(2),
-          cryptoAmount: tx.amounts[0],
-          walletAddress: freshUser.circleWalletAddress || "",
-          txHash: tx.txHash || tx.id,
-          status: "completed",
-          createdAt: tx.createDate || now,
-          expiresAt: now,
-          completedAt: now,
-        });
+        const wasInserted = await storage.creditCircleDeposit(
+          {
+            userId: freshUser.id,
+            currency: "USDC",
+            amount: usdAmount.toFixed(2),
+            cryptoAmount: tx.amounts[0],
+            walletAddress: freshUser.circleWalletAddress || "",
+            txHash: tx.txHash || null,
+            circleTransferId: tx.id,
+            status: "completed",
+            createdAt: tx.createDate || now,
+            expiresAt: now,
+            completedAt: now,
+          },
+          {
+            userId: freshUser.id,
+            type: "deposit",
+            amount: usdAmount.toFixed(2),
+            description: `USDC deposit via Circle wallet (auto-detected)`,
+            orderId: null,
+            stripeSessionId: null,
+            createdAt: now,
+          },
+          freshUser.id,
+          usdAmount.toFixed(2)
+        );
 
-        const currentBalance = parseFloat(freshUser.balance);
-        const newBalance = (currentBalance + usdAmount).toFixed(2);
-        await storage.updateUserBalance(freshUser.id, newBalance);
-        freshUser.balance = newBalance;
-
-        await storage.createTransaction({
-          userId: freshUser.id,
-          type: "deposit",
-          amount: usdAmount.toFixed(2),
-          description: `USDC deposit via Circle wallet (auto-detected)`,
-          orderId: null,
-          stripeSessionId: null,
-          createdAt: now,
-        });
-
-        credited++;
+        if (wasInserted) {
+          recordedTransferIds.add(tx.id);
+          if (tx.txHash) recordedTxHashes.add(tx.txHash);
+          credited++;
+        }
       }
 
+      const updatedUser = await storage.getUser(freshUser.id);
       res.json({
         message: credited > 0
           ? `${credited} new deposit(s) detected and credited`
           : "No new deposits found",
         credited,
-        newBalance: freshUser.balance,
+        newBalance: updatedUser?.balance || freshUser.balance,
       });
     } catch (err: any) {
       console.error("Circle deposit check error:", err);
@@ -1033,6 +1060,15 @@ export async function registerRoutes(
 
   app.get("/api/admin/crypto/pending", requireAdmin, async (_req, res) => {
     const deposits = await storage.getAllPendingCryptoDeposits();
+    const enriched = await Promise.all(deposits.map(async (d) => {
+      const u = await storage.getUser(d.userId);
+      return { ...d, username: u?.username || "Unknown", email: u?.email || "" };
+    }));
+    res.json(enriched);
+  });
+
+  app.get("/api/admin/crypto/all", requireAdmin, async (_req, res) => {
+    const deposits = await storage.getAllCryptoDeposits();
     const enriched = await Promise.all(deposits.map(async (d) => {
       const u = await storage.getUser(d.userId);
       return { ...d, username: u?.username || "Unknown", email: u?.email || "" };

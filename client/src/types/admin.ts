@@ -43,6 +43,7 @@ export interface AdminDeposit {
   cryptoAmount: string | null;
   walletAddress: string;
   txHash: string | null;
+  circleTransferId: string | null;
   status: string;
   createdAt: string;
   expiresAt: string;

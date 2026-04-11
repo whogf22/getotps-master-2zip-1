@@ -128,6 +128,9 @@ try {
 try {
   sqlite.exec(`ALTER TABLE crypto_deposits ADD COLUMN circle_transfer_id TEXT`);
 } catch (e) {}
+try {
+  sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_crypto_deposits_circle_transfer_id ON crypto_deposits(circle_transfer_id) WHERE circle_transfer_id IS NOT NULL`);
+} catch (e) {}
 
 function seedSettings() {
   const defaults: Record<string, string> = {
@@ -223,6 +226,8 @@ export interface IStorage {
   getUserCryptoDeposits(userId: number): Promise<CryptoDeposit[]>;
   updateCryptoDeposit(id: number, data: Partial<CryptoDeposit>): Promise<void>;
   getAllPendingCryptoDeposits(): Promise<CryptoDeposit[]>;
+  getAllCryptoDeposits(): Promise<CryptoDeposit[]>;
+  creditCircleDeposit(depositData: InsertCryptoDeposit, txData: InsertTransaction, userId: number, creditAmount: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -457,6 +462,46 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(cryptoDeposits).where(
       or(eq(cryptoDeposits.status, "pending"), eq(cryptoDeposits.status, "confirming"))
     ).orderBy(desc(cryptoDeposits.id)).all();
+  }
+
+  async getAllCryptoDeposits(): Promise<CryptoDeposit[]> {
+    return db.select().from(cryptoDeposits).orderBy(desc(cryptoDeposits.id)).all();
+  }
+
+  async creditCircleDeposit(depositData: InsertCryptoDeposit, txData: InsertTransaction, userId: number, creditAmount: string): Promise<boolean> {
+    try {
+      sqlite.exec("BEGIN IMMEDIATE");
+      try {
+        const existing = sqlite.prepare(
+          "SELECT id FROM crypto_deposits WHERE circle_transfer_id = ?"
+        ).get(depositData.circleTransferId);
+        if (existing) {
+          sqlite.exec("ROLLBACK");
+          return false;
+        }
+
+        db.insert(cryptoDeposits).values(depositData).run();
+
+        const user = db.select().from(users).where(eq(users.id, userId)).get();
+        if (user) {
+          const currentBalance = parseFloat(user.balance);
+          const newBalance = (currentBalance + parseFloat(creditAmount)).toFixed(2);
+          db.update(users).set({ balance: newBalance }).where(eq(users.id, userId)).run();
+        }
+
+        db.insert(transactions).values(txData).run();
+        sqlite.exec("COMMIT");
+        return true;
+      } catch (innerErr) {
+        try { sqlite.exec("ROLLBACK"); } catch (_) {}
+        throw innerErr;
+      }
+    } catch (err: any) {
+      if (err?.message?.includes("UNIQUE constraint failed")) {
+        return false;
+      }
+      throw err;
+    }
   }
 }
 

@@ -92,18 +92,22 @@ export async function getWalletBalance(walletId: string): Promise<{
   };
 }
 
-export async function listWalletTransactions(walletId: string): Promise<Array<{
+export interface CircleTransaction {
   id: string;
   type: string;
   state: string;
   amounts: string[];
+  tokenId: string;
+  tokenName: string;
   tokenSymbol: string;
   sourceAddress: string;
   destinationAddress: string;
   txHash: string;
   createDate: string;
   blockchain: string;
-}>> {
+}
+
+export async function listWalletTransactions(walletId: string): Promise<CircleTransaction[]> {
   const client = getClient();
   const response = await client.listTransactions({
     walletIds: [walletId],
@@ -114,7 +118,9 @@ export async function listWalletTransactions(walletId: string): Promise<Array<{
     type: tx.transactionType || "",
     state: tx.state || "",
     amounts: tx.amounts || [],
-    tokenSymbol: tx.tokenId ? "" : "",
+    tokenId: tx.tokenId || "",
+    tokenName: tx.token?.name || "",
+    tokenSymbol: tx.token?.symbol || "",
     sourceAddress: tx.sourceAddress || "",
     destinationAddress: tx.destinationAddress || "",
     txHash: tx.txHash || "",
