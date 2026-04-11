@@ -31,11 +31,12 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 ## Circle Programmable Wallets Integration
 - **SDK**: `@circle-fin/developer-controlled-wallets` — Developer-Controlled wallet model
 - **Service**: `server/circle.ts` — wraps Circle SDK (create wallet set, create wallet, get balance, list transactions)
-- **Env Vars**: `CIRCLE_API_KEY` (Circle API key) + `CIRCLE_ENTITY_SECRET` (32-byte entity secret)
+- **Env Vars (both required for deployment)**: `CIRCLE_API_KEY` (Circle API key from Circle Console) + `CIRCLE_ENTITY_SECRET` (32-byte entity secret, must be generated and registered via Circle SDK before first use)
 - **User Flow**: Each user gets a unique Ethereum wallet address for USDC deposits via Circle
 - **Auto-detection**: `POST /api/circle/check-deposits` polls Circle for inbound USDC transfers, filters USDC-only by tokenSymbol/tokenName, deduplicates by circleTransferId+txHash, and auto-credits user balance
 - **Auto-wallet**: When Circle is configured, `GET /api/circle/wallet` auto-creates a wallet on first visit (no manual button needed)
-- **Fallback**: When Circle is not configured, the Add Funds page falls back to manual crypto deposit (static wallets + admin confirmation). Circle is the primary/default method when configured.
+- **Fallback**: When Circle is not configured (missing env vars), the Add Funds page falls back to manual crypto deposit (static wallets + admin confirmation). When Circle IS configured, manual crypto endpoints are disabled and the UI only shows Circle USDC deposits.
+- **Background polling**: Server polls Circle every 2 minutes for all users with wallets, auto-crediting confirmed USDC deposits without user action.
 - **DB Fields**: `users.circle_wallet_id`, `users.circle_wallet_address`, `crypto_deposits.circle_transfer_id` — stores per-user Circle wallet info and transfer dedup
 - **Endpoints**: `GET /api/circle/configured`, `GET /api/circle/wallet`, `POST /api/circle/wallet/create`, `POST /api/circle/check-deposits`
 
