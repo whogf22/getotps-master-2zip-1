@@ -132,6 +132,45 @@ try {
   sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_crypto_deposits_circle_transfer_id ON crypto_deposits(circle_transfer_id) WHERE circle_transfer_id IS NOT NULL`);
 } catch (e) {}
 
+try {
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_rentals_user_id ON rentals(user_id)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_crypto_deposits_user_id ON crypto_deposits(user_id)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_rental_messages_rental_id ON rental_messages(rental_id)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_crypto_deposits_status ON crypto_deposits(status)`);
+} catch (e) {}
+
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN created_at TEXT`);
+} catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN updated_at TEXT`);
+} catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE services ADD COLUMN created_at TEXT`);
+} catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE services ADD COLUMN updated_at TEXT`);
+} catch (e) {}
+
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_user_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id INTEGER,
+    details TEXT,
+    created_at TEXT NOT NULL
+  )
+`);
+try {
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_audit_logs_admin ON audit_logs(admin_user_id)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`);
+} catch (e) {}
+
 function seedSettings() {
   const defaults: Record<string, string> = {
     price_multiplier: "1.5",
@@ -228,6 +267,9 @@ export interface IStorage {
   getAllPendingCryptoDeposits(): Promise<CryptoDeposit[]>;
   getAllCryptoDeposits(): Promise<CryptoDeposit[]>;
   creditCircleDeposit(depositData: InsertCryptoDeposit, txData: InsertTransaction, userId: number, creditAmount: string): Promise<boolean>;
+  atomicDeductBalance(userId: number, amount: number): Promise<{ success: boolean; newBalance: string }>;
+  atomicAddBalance(userId: number, amount: number): Promise<string>;
+  createAuditLog(adminUserId: number, action: string, targetType: string, targetId: number | null, details?: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -466,6 +508,27 @@ export class DatabaseStorage implements IStorage {
 
   async getAllCryptoDeposits(): Promise<CryptoDeposit[]> {
     return db.select().from(cryptoDeposits).orderBy(desc(cryptoDeposits.id)).all();
+  }
+
+  async atomicDeductBalance(userId: number, amount: number): Promise<{ success: boolean; newBalance: string }> {
+    const result = sqlite.prepare(
+      `UPDATE users SET balance = printf('%.2f', CAST(balance AS REAL) - ?) WHERE id = ? AND CAST(balance AS REAL) >= ? RETURNING balance`
+    ).get(amount, userId, amount) as { balance: string } | undefined;
+    if (!result) return { success: false, newBalance: "0.00" };
+    return { success: true, newBalance: result.balance };
+  }
+
+  async atomicAddBalance(userId: number, amount: number): Promise<string> {
+    const result = sqlite.prepare(
+      `UPDATE users SET balance = printf('%.2f', CAST(balance AS REAL) + ?) WHERE id = ? RETURNING balance`
+    ).get(amount, userId) as { balance: string } | undefined;
+    return result?.balance || "0.00";
+  }
+
+  async createAuditLog(adminUserId: number, action: string, targetType: string, targetId: number | null, details?: string): Promise<void> {
+    sqlite.prepare(
+      `INSERT INTO audit_logs (admin_user_id, action, target_type, target_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(adminUserId, action, targetType, targetId, details || null, new Date().toISOString());
   }
 
   async creditCircleDeposit(depositData: InsertCryptoDeposit, txData: InsertTransaction, userId: number, creditAmount: string): Promise<boolean> {

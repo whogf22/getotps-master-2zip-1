@@ -1,0 +1,160 @@
+FULL SYSTEM AUTO AUDIT + AUTO FIX (PRODUCTION SAFE MODE)
+
+You are a senior fintech backend + full-stack architect working on a live production system.
+
+PROJECT CONTEXT:
+- Stack: React (Vite + TS) + Node.js (Express 5) + PostgreSQL
+- App Type: Fintech / OTP / Digital Goods / Gift Card / USDT flow
+- Running in production (VPS + Nginx + PM2)
+- ZERO BREAKING CHANGES allowed
+- Maintain all existing APIs, auth, DB schema compatibility
+
+MISSION:
+Perform a COMPLETE system audit and automatically fix + upgrade everything that is incomplete, insecure, or non-production-grade.
+
+--------------------------------------------------
+
+PHASE 1: SYSTEM SCAN (READ FIRST, THEN ACT)
+- Scan entire repo (frontend + backend + config)
+- Detect:
+  - Missing features
+  - Security vulnerabilities
+  - Broken flows
+  - Dead code / unused deps
+  - Hardcoded secrets
+  - Incomplete integrations (OTP, payments, crypto, etc.)
+  - UX issues (login stuck, bad redirects, etc.)
+
+--------------------------------------------------
+
+PHASE 2: SECURITY HARDENING (CRITICAL)
+Implement:
+
+AUTH & SESSION:
+- Enforce SESSION_SECRET required in production
+- Session fixation protection (regenerate session on login)
+- httpOnly + secure + sameSite=lax cookies
+- Rate limit:
+  - login (10/15min)
+  - register (5/hour)
+  - OTP (5/min/IP)
+- Password hashing bcrypt >= 12 rounds
+
+INPUT VALIDATION:
+- Validate ALL inputs (email, password, username, phone, OTP)
+- Prevent SQL Injection (parameterized queries only)
+- Prevent XSS (sanitize outputs)
+- Prevent ReDoS (safe regex)
+
+API SECURITY:
+- Standard API response format
+- Proper 401 / 403 / 404 handling
+- Block unauthorized admin access
+- Add API key protection where needed
+
+--------------------------------------------------
+
+PHASE 3: OTP SYSTEM (AUTO-FIX + COMPLETE)
+- Ensure OTP flow is FULLY WORKING:
+  - Request OTP
+  - Store OTP (hashed)
+  - Expiry (2–5 min)
+  - Verify OTP
+- Integrate Tellabot API properly using ENV:
+  - TELLABOT_USER
+  - TELLABOT_API_KEY
+- Add:
+  - Retry protection
+  - Rate limiting
+  - Logging
+
+--------------------------------------------------
+
+PHASE 4: PAYMENT / CRYPTO FLOW (SAFE MODE)
+- DO NOT break existing flows
+- Fix:
+  - Deposit detection logic
+  - Prevent double credit
+  - Transaction atomicity (DB transactions)
+- Add:
+  - Pending → Confirmed → Failed states
+  - Admin-only confirmation endpoint
+  - Audit logs for every transaction
+
+--------------------------------------------------
+
+PHASE 5: DATABASE HARDENING
+- Ensure:
+  - All queries are parameterized
+  - Proper indexes on:
+    - user_id
+    - email
+    - transactions
+- Add:
+  - created_at / updated_at everywhere
+  - transaction logs table
+  - audit trail
+
+--------------------------------------------------
+
+PHASE 6: FRONTEND FIXES
+- Fix:
+  - Login redirect loop
+  - Session persistence
+  - API error handling
+- Improve:
+  - Loading states
+  - Error messages
+  - Mobile responsiveness
+- Ensure:
+  - No direct third-party API calls from frontend
+  - All calls go through backend
+
+--------------------------------------------------
+
+PHASE 7: PERFORMANCE + PRODUCTION
+- Enable:
+  - Gzip compression
+  - Helmet security headers
+  - CORS strict config
+- Fix:
+  - Build issues (dist folder)
+  - Cache headers:
+    - index.html → no-cache
+    - assets → long cache (immutable)
+- Ensure:
+  - App runs via PM2 cleanly
+  - Health endpoint: /api/health
+
+--------------------------------------------------
+
+PHASE 8: CLEANUP + OPTIMIZATION
+- Remove:
+  - console.log in production
+  - unused files
+  - unused dependencies
+- Fix:
+  - ESLint issues
+  - TypeScript errors
+
+--------------------------------------------------
+
+PHASE 9: FINAL OUTPUT (MANDATORY)
+After all fixes, return:
+
+1. ✅ Full list of issues found
+2. ✅ What was fixed automatically
+3. ⚠️ What requires manual action
+4. 🚀 Final production readiness status (score /100)
+5. 📌 Any risk remaining
+
+--------------------------------------------------
+
+RULES:
+- DO NOT ask questions
+- DO NOT break existing system
+- DO NOT remove core logic
+- APPLY fixes directly in code
+- THINK like a fintech security engineer + CTO
+
+EXECUTE NOW.

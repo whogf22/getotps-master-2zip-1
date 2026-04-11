@@ -41,14 +41,15 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 - **Endpoints**: `GET /api/circle/configured`, `GET /api/circle/wallet`, `POST /api/circle/wallet/create`, `POST /api/circle/check-deposits`
 
 ## Database Schema (SQLite)
-- `users` — auth, balance, API key, role, circle_wallet_id, circle_wallet_address
-- `services` — cached from Proxnum with slug=service code (e.g., "tg", "wa", "fb")
-- `orders` — virtual number activations with proxnum_id, country, status tracking
-- `rentals` — longer-term number leases with days, expiry, proxnum_id
-- `rental_messages` — SMS messages received on rented numbers
+- `users` — auth, balance, API key, role, circle_wallet_id, circle_wallet_address, created_at, updated_at
+- `services` — cached from Proxnum with slug=service code (e.g., "tg", "wa", "fb"), created_at, updated_at
+- `orders` — virtual number activations with proxnum_id, country, status tracking (indexed on user_id, status)
+- `rentals` — longer-term number leases with days, expiry, proxnum_id (indexed on user_id)
+- `rental_messages` — SMS messages received on rented numbers (indexed on rental_id)
 - `settings` — key/value config (price_multiplier, default_country, per-service multipliers)
-- `transactions` — financial ledger (deposit, purchase, refund)
-- `crypto_deposits` — crypto payment flow, optional circle_transfer_id
+- `transactions` — financial ledger (deposit, purchase, refund) (indexed on user_id)
+- `crypto_deposits` — crypto payment flow, optional circle_transfer_id (indexed on user_id, status, circle_transfer_id)
+- `audit_logs` — admin action audit trail (admin_user_id, action, target_type, target_id, details, created_at)
 
 ## Key Design Decisions
 - **Single WebGL canvas**: Only the HeroScene uses R3F Canvas. PhoneMockup is CSS-only to prevent GPU context loss.
@@ -99,6 +100,19 @@ shared/
 - Protected by `AdminRoute` component (redirects non-admin users to /dashboard)
 - Admin sidebar links (amber-themed) appear only for users with role "admin"
 - Default admin: admin@getotps.com / admin123
+
+## Security & Performance
+- **Rate limiting**: express-rate-limit on login (10/15min), register (10/hr), API v1 (60/min) with `validate: { ip: false }` to avoid IPv6 issues
+- **Session**: SESSION_SECRET enforced in production (crashes if missing), httpOnly+sameSite+secure cookies
+- **Atomic balance operations**: `atomicDeductBalance()` and `atomicAddBalance()` use single SQL UPDATE with RETURNING to prevent race conditions/double-spending
+- **Input validation**: `parseId()` validates all route params; NaN/negative checks on all numeric inputs; admin settings validated (multiplier 0.1-100, country code format)
+- **Deposit caps**: Max $10,000 per crypto deposit
+- **Crypto wallets**: Env-configurable via WALLET_BTC, WALLET_ETH, etc. with sensible defaults
+- **Gzip compression**: compression middleware enabled
+- **Health endpoint**: GET /api/health returns status, uptime, timestamp
+- **CSP**: Strict Content-Security-Policy via helmet (fontshare allowed for fonts/styles)
+- **Audit logging**: Admin actions (update_service, update_settings, add_balance) logged to audit_logs table
+- **DB indexes**: Foreign keys (user_id, rental_id) and status columns indexed for performance
 
 ## Important Notes
 - Three.js packages pinned: fiber@8.18.0, drei@9.122.0, three@0.183.2 (React 18 compatible)

@@ -132,13 +132,21 @@ async function syncProxnumServices(): Promise<void> {
 }
 
 const CRYPTO_WALLETS: Record<string, string> = {
-  BTC: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-  ETH: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  USDT_TRC20: "TN2Y5mFKbE2BC3RLeFz4BEMnGpGEaVNbHv",
-  USDT_ERC20: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  USDC: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  LTC: "ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kgmn4n9",
+  BTC: process.env.WALLET_BTC || "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+  ETH: process.env.WALLET_ETH || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+  USDT_TRC20: process.env.WALLET_USDT_TRC20 || "TN2Y5mFKbE2BC3RLeFz4BEMnGpGEaVNbHv",
+  USDT_ERC20: process.env.WALLET_USDT_ERC20 || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+  USDC: process.env.WALLET_USDC || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+  LTC: process.env.WALLET_LTC || "ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kgmn4n9",
 };
+
+const MAX_DEPOSIT_USD = 10000;
+
+function parseId(param: string): number | null {
+  const n = Number(param);
+  if (isNaN(n) || !Number.isInteger(n) || n <= 0) return null;
+  return n;
+}
 
 const CRYPTO_RATES: Record<string, number> = {
   BTC: 84250.00, ETH: 3420.00, USDT_TRC20: 1.00,
@@ -165,6 +173,7 @@ export async function registerRoutes(
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { ip: false },
     message: { message: "Too many login attempts, please try again later" },
   });
 
@@ -173,6 +182,7 @@ export async function registerRoutes(
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { ip: false },
     message: { message: "Too many registration attempts, please try again later" },
   });
 
@@ -184,6 +194,7 @@ export async function registerRoutes(
     keyGenerator: (req) => {
       return (req.headers["x-api-key"] as string) || req.ip || "unknown";
     },
+    validate: { ip: false },
     message: { error: "Rate limit exceeded" },
   });
 
@@ -388,9 +399,9 @@ export async function registerRoutes(
       const freshUser = await storage.getUser(user.id);
       if (!freshUser) return res.status(404).json({ message: "User not found" });
 
-      const balance = parseFloat(freshUser.balance);
       const price = parseFloat(service.price);
-      if (balance < price) return res.status(400).json({ message: "Insufficient balance" });
+      if (isNaN(price) || price <= 0) return res.status(500).json({ message: "Invalid service price" });
+      if (parseFloat(freshUser.balance) < price) return res.status(400).json({ message: "Insufficient balance" });
 
       const countries = await getCachedCountries();
       const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
@@ -418,9 +429,10 @@ export async function registerRoutes(
       }
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const chargePrice = parseFloat(service.price);
-      const newBalance = (balance - chargePrice).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
+      const deductResult = await storage.atomicDeductBalance(user.id, price);
+      if (!deductResult.success) {
+        return res.status(400).json({ message: "Insufficient balance" });
+      }
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 20 * 60 * 1000);
@@ -472,8 +484,10 @@ export async function registerRoutes(
   });
 
   app.get("/api/orders/:id", requireAuth, async (req, res) => {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid order ID" });
     const user = req.user as any;
-    const order = await storage.getOrder(Number(req.params.id));
+    const order = await storage.getOrder(id);
     if (!order) return res.status(404).json({ message: "Order not found" });
     if (order.userId !== user.id && (req.user as any)?.role !== "admin") {
       return res.status(403).json({ message: "Forbidden" });
@@ -483,8 +497,10 @@ export async function registerRoutes(
 
   app.post("/api/orders/:id/check-sms", requireAuth, async (req, res) => {
     try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ message: "Invalid order ID" });
       const user = req.user as any;
-      const order = await storage.getOrder(Number(req.params.id));
+      const order = await storage.getOrder(id);
       if (!order) return res.status(404).json({ message: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (order.status !== "pending" && order.status !== "waiting") {
@@ -551,8 +567,10 @@ export async function registerRoutes(
 
   app.post("/api/orders/:id/cancel", requireAuth, async (req, res) => {
     try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ message: "Invalid order ID" });
       const user = req.user as any;
-      const order = await storage.getOrder(Number(req.params.id));
+      const order = await storage.getOrder(id);
       if (!order) return res.status(404).json({ message: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (order.status !== "pending" && order.status !== "waiting") {
@@ -571,10 +589,9 @@ export async function registerRoutes(
 
       await storage.cancelOrder(order.id);
 
-      const freshUser = await storage.getUser(user.id);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(order.price)).toFixed(2);
-        await storage.updateUserBalance(user.id, newBalance);
+      const refundAmount = parseFloat(order.price);
+      if (!isNaN(refundAmount) && refundAmount > 0) {
+        await storage.atomicAddBalance(user.id, refundAmount);
         await storage.createTransaction({
           userId: user.id,
           type: "refund",
@@ -594,8 +611,10 @@ export async function registerRoutes(
 
   app.post("/api/orders/:id/resend", requireAuth, async (req, res) => {
     try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ message: "Invalid order ID" });
       const user = req.user as any;
-      const order = await storage.getOrder(Number(req.params.id));
+      const order = await storage.getOrder(id);
       if (!order) return res.status(404).json({ message: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (order.status !== "pending" && order.status !== "waiting") {
@@ -664,8 +683,7 @@ export async function registerRoutes(
       const totalBase = baseDayPrice * rentalDays;
       const finalPrice = await calculatePrice(totalBase, service.slug, resolvedCountry);
 
-      const balance = parseFloat(freshUser.balance);
-      if (balance < finalPrice) return res.status(400).json({ message: "Insufficient balance" });
+      if (parseFloat(freshUser.balance) < finalPrice) return res.status(400).json({ message: "Insufficient balance" });
 
       const pnResult = await proxnumApi.buyRental(service.slug, resolvedCountry, rentalDays);
 
@@ -683,8 +701,10 @@ export async function registerRoutes(
       }
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const newBalance = (balance - finalPrice).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
+      const deductResult = await storage.atomicDeductBalance(user.id, finalPrice);
+      if (!deductResult.success) {
+        return res.status(400).json({ message: "Insufficient balance" });
+      }
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + rentalDays * 24 * 60 * 60 * 1000);
@@ -732,8 +752,10 @@ export async function registerRoutes(
   });
 
   app.get("/api/rentals/:id", requireAuth, async (req, res) => {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid rental ID" });
     const user = req.user as any;
-    const rental = await storage.getRental(Number(req.params.id));
+    const rental = await storage.getRental(id);
     if (!rental) return res.status(404).json({ message: "Rental not found" });
     if (rental.userId !== user.id && (req.user as any)?.role !== "admin") {
       return res.status(403).json({ message: "Forbidden" });
@@ -743,8 +765,10 @@ export async function registerRoutes(
 
   app.get("/api/rentals/:id/messages", requireAuth, async (req, res) => {
     try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ message: "Invalid rental ID" });
       const user = req.user as any;
-      const rental = await storage.getRental(Number(req.params.id));
+      const rental = await storage.getRental(id);
       if (!rental) return res.status(404).json({ message: "Rental not found" });
       if (rental.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
 
@@ -783,8 +807,10 @@ export async function registerRoutes(
 
   app.post("/api/rentals/:id/cancel", requireAuth, async (req, res) => {
     try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ message: "Invalid rental ID" });
       const user = req.user as any;
-      const rental = await storage.getRental(Number(req.params.id));
+      const rental = await storage.getRental(id);
       if (!rental) return res.status(404).json({ message: "Rental not found" });
       if (rental.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (rental.status !== "active") return res.status(400).json({ message: "Rental is not active" });
@@ -1013,6 +1039,7 @@ export async function registerRoutes(
       if (!currency || !amount) return res.status(400).json({ message: "Currency and amount are required" });
       const usdAmount = parseFloat(amount);
       if (isNaN(usdAmount) || usdAmount < 1) return res.status(400).json({ message: "Minimum deposit is $1.00" });
+      if (usdAmount > MAX_DEPOSIT_USD) return res.status(400).json({ message: `Maximum deposit is $${MAX_DEPOSIT_USD}` });
       const walletAddress = CRYPTO_WALLETS[currency];
       if (!walletAddress) return res.status(400).json({ message: "Unsupported currency" });
       const rate = CRYPTO_RATES[currency];
@@ -1049,7 +1076,9 @@ export async function registerRoutes(
       if (!/^[a-fA-F0-9]{64}$/.test(normalizedHash)) {
         return res.status(400).json({ message: "Invalid transaction hash format (expected 64 hex characters, optionally 0x-prefixed)" });
       }
-      const deposit = await storage.getCryptoDeposit(Number(req.params.id));
+      const depositId = parseId(req.params.id);
+      if (!depositId) return res.status(400).json({ message: "Invalid deposit ID" });
+      const deposit = await storage.getCryptoDeposit(depositId);
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
       if (deposit.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (deposit.status !== "pending") return res.status(400).json({ message: "Deposit is not pending" });
@@ -1060,21 +1089,24 @@ export async function registerRoutes(
 
   app.post("/api/admin/crypto/:id/confirm", requireAdmin, async (req, res) => {
     try {
-      const deposit = await storage.getCryptoDeposit(Number(req.params.id));
+      const depositId = parseId(req.params.id);
+      if (!depositId) return res.status(400).json({ message: "Invalid deposit ID" });
+      const deposit = await storage.getCryptoDeposit(depositId);
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
       if (deposit.status === "completed") return res.status(400).json({ message: "Already completed" });
       const now = new Date().toISOString();
       await storage.updateCryptoDeposit(deposit.id, { status: "completed", completedAt: now });
-      const freshUser = await storage.getUser(deposit.userId);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(deposit.amount)).toFixed(2);
-        await storage.updateUserBalance(deposit.userId, newBalance);
+      const creditAmount = parseFloat(deposit.amount);
+      if (!isNaN(creditAmount) && creditAmount > 0) {
+        await storage.atomicAddBalance(deposit.userId, creditAmount);
         await storage.createTransaction({
           userId: deposit.userId, type: "deposit", amount: deposit.amount,
           description: `Crypto deposit (${deposit.currency}) confirmed by admin`,
           orderId: null, stripeSessionId: null, createdAt: now,
         });
       }
+      const admin = req.user as any;
+      await storage.createAuditLog(admin.id, "confirm_deposit", "crypto_deposit", deposit.id, `$${deposit.amount} (${deposit.currency}) for user ${deposit.userId}`);
       res.json({ message: "Deposit confirmed and balance credited" });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
@@ -1197,7 +1229,11 @@ export async function registerRoutes(
         allowedFields.category = cat;
       }
       if (isActive !== undefined) allowedFields.isActive = isActive ? 1 : 0;
-      await storage.updateService(Number(req.params.id), allowedFields);
+      const serviceId = parseId(req.params.id);
+      if (!serviceId) return res.status(400).json({ message: "Invalid service ID" });
+      await storage.updateService(serviceId, allowedFields);
+      const admin = req.user as any;
+      await storage.createAuditLog(admin.id, "update_service", "service", serviceId, JSON.stringify(allowedFields));
       res.json({ message: "Service updated" });
     } catch (err: any) { res.status(500).json({ message: "Service update failed" }); }
   });
@@ -1223,50 +1259,74 @@ export async function registerRoutes(
   app.put("/api/admin/settings", requireAdmin, async (req, res) => {
     try {
       const { price_multiplier, default_country, service_multipliers } = req.body;
-      if (price_multiplier !== undefined) await storage.setSetting("price_multiplier", String(price_multiplier));
-      if (default_country !== undefined) await storage.setSetting("default_country", String(default_country));
+      if (price_multiplier !== undefined) {
+        const mult = parseFloat(String(price_multiplier));
+        if (isNaN(mult) || mult < 0.1 || mult > 100) {
+          return res.status(400).json({ message: "Price multiplier must be between 0.1 and 100" });
+        }
+        await storage.setSetting("price_multiplier", mult.toString());
+      }
+      if (default_country !== undefined) {
+        const country = String(default_country).toLowerCase().replace(/[^a-z]/g, "").slice(0, 5);
+        if (!country) return res.status(400).json({ message: "Invalid country code" });
+        await storage.setSetting("default_country", country);
+      }
       if (service_multipliers && typeof service_multipliers === "object") {
         for (const [slug, val] of Object.entries(service_multipliers)) {
           if (val === null || val === "" || val === "0") {
             await storage.deleteSetting(`multiplier_${slug}`);
           } else {
-            await storage.setSetting(`multiplier_${slug}`, String(val));
+            const multVal = parseFloat(String(val));
+            if (isNaN(multVal) || multVal < 0.1 || multVal > 100) {
+              return res.status(400).json({ message: `Invalid multiplier for ${slug}: must be between 0.1 and 100` });
+            }
+            await storage.setSetting(`multiplier_${slug}`, multVal.toString());
           }
         }
       }
+      const admin = req.user as any;
+      await storage.createAuditLog(admin.id, "update_settings", "settings", null, JSON.stringify(req.body));
       res.json({ message: "Settings updated" });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/admin/users/:id/add-balance", requireAdmin, async (req, res) => {
     try {
+      const userId = parseId(req.params.id);
+      if (!userId) return res.status(400).json({ message: "Invalid user ID" });
       const { amount, description } = req.body;
-      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-        return res.status(400).json({ message: "Valid positive amount is required" });
+      const addAmount = Number(amount);
+      if (!amount || isNaN(addAmount) || addAmount <= 0 || addAmount > MAX_DEPOSIT_USD) {
+        return res.status(400).json({ message: `Valid positive amount required (max $${MAX_DEPOSIT_USD})` });
       }
-      const targetUser = await storage.getUser(Number(req.params.id));
+      const targetUser = await storage.getUser(userId);
       if (!targetUser) return res.status(404).json({ message: "User not found" });
-      const newBalance = (parseFloat(targetUser.balance) + Number(amount)).toFixed(2);
-      await storage.updateUserBalance(targetUser.id, newBalance);
+      const newBalance = await storage.atomicAddBalance(targetUser.id, addAmount);
       await storage.createTransaction({
         userId: targetUser.id,
         type: "deposit",
-        amount: String(Number(amount).toFixed(2)),
+        amount: addAmount.toFixed(2),
         description: description || "Admin balance adjustment",
         orderId: null,
         stripeSessionId: null,
         createdAt: new Date().toISOString(),
       });
+      const admin = req.user as any;
+      await storage.createAuditLog(admin.id, "add_balance", "user", targetUser.id, `$${addAmount.toFixed(2)}: ${description || "Admin balance adjustment"}`);
       res.json({ message: "Balance updated", newBalance });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/admin/crypto/:id/reject", requireAdmin, async (req, res) => {
     try {
-      const deposit = await storage.getCryptoDeposit(Number(req.params.id));
+      const depositId = parseId(req.params.id);
+      if (!depositId) return res.status(400).json({ message: "Invalid deposit ID" });
+      const deposit = await storage.getCryptoDeposit(depositId);
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
       if (deposit.status === "completed") return res.status(400).json({ message: "Cannot reject completed deposit" });
       await storage.updateCryptoDeposit(deposit.id, { status: "rejected", completedAt: new Date().toISOString() });
+      const admin = req.user as any;
+      await storage.createAuditLog(admin.id, "reject_deposit", "crypto_deposit", deposit.id, `$${deposit.amount} (${deposit.currency}) for user ${deposit.userId}`);
       res.json({ message: "Deposit rejected" });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
@@ -1345,8 +1405,10 @@ export async function registerRoutes(
       }
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const newBalance = (balance - price).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
+      const deductResult = await storage.atomicDeductBalance(user.id, price);
+      if (!deductResult.success) {
+        return res.status(400).json({ error: "Insufficient balance" });
+      }
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 20 * 60 * 1000);
@@ -1371,8 +1433,10 @@ export async function registerRoutes(
   });
 
   app.get("/api/v1/order/:id", apiKeyLimiter, requireApiKey, async (req, res) => {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "Invalid order ID" });
     const user = (req as any).apiUser;
-    const order = await storage.getOrder(Number(req.params.id));
+    const order = await storage.getOrder(id);
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (order.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
 
@@ -1423,8 +1487,10 @@ export async function registerRoutes(
 
   app.post("/api/v1/order/:id/cancel", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ error: "Invalid order ID" });
       const user = (req as any).apiUser;
-      const order = await storage.getOrder(Number(req.params.id));
+      const order = await storage.getOrder(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
       if (order.status !== "pending" && order.status !== "waiting") return res.status(400).json({ error: "Cannot cancel" });
@@ -1440,10 +1506,9 @@ export async function registerRoutes(
       }
 
       await storage.cancelOrder(order.id);
-      const freshUser = await storage.getUser(user.id);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(order.price)).toFixed(2);
-        await storage.updateUserBalance(user.id, newBalance);
+      const refundAmount = parseFloat(order.price);
+      if (!isNaN(refundAmount) && refundAmount > 0) {
+        await storage.atomicAddBalance(user.id, refundAmount);
       }
       res.json({ message: "Order cancelled and refunded" });
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
@@ -1463,8 +1528,10 @@ export async function registerRoutes(
 
   app.post("/api/v1/order/:id/resend", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ error: "Invalid order ID" });
       const user = (req as any).apiUser;
-      const order = await storage.getOrder(Number(req.params.id));
+      const order = await storage.getOrder(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
       if (order.status !== "pending" && order.status !== "waiting") return res.status(400).json({ error: "Cannot resend for this order" });
@@ -1508,8 +1575,7 @@ export async function registerRoutes(
       const totalBase = baseDayPrice * rentalDays;
       const finalPrice = await calculatePrice(totalBase, svc.slug, rentalCountry);
 
-      const balance = parseFloat(freshUser.balance);
-      if (balance < finalPrice) return res.status(400).json({ error: "Insufficient balance" });
+      if (parseFloat(freshUser.balance) < finalPrice) return res.status(400).json({ error: "Insufficient balance" });
 
       const pnResult = await proxnumApi.buyRental(svc.slug || svc.name, rentalCountry, rentalDays);
       if (pnResult.error) {
@@ -1522,8 +1588,10 @@ export async function registerRoutes(
       if (!phoneNumber) return res.status(503).json({ error: "No rental numbers available" });
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const newBalance = (balance - finalPrice).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
+      const deductResult = await storage.atomicDeductBalance(user.id, finalPrice);
+      if (!deductResult.success) {
+        return res.status(400).json({ error: "Insufficient balance" });
+      }
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + rentalDays * 24 * 60 * 60 * 1000);
