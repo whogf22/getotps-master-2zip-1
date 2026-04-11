@@ -102,25 +102,7 @@ export default function AddFunds() {
       if (activeDeposit) {
         setActiveDeposit({ ...activeDeposit, status: "confirming", txHash });
       }
-      toast({ title: "TX hash submitted", description: "Awaiting blockchain confirmation." });
-    },
-    onError: (err: any) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const simulateConfirmMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("POST", `/api/crypto/${id}/simulate-confirm`, {});
-      return res.json();
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crypto/deposits"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-      refreshUser();
-      setActiveDeposit(null);
-      toast({ title: "Deposit confirmed", description: `Balance updated to $${data.newBalance}` });
+      toast({ title: "TX hash submitted", description: "Awaiting admin confirmation." });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -264,22 +246,12 @@ export default function AddFunds() {
                         <div className="flex items-center gap-3">
                           <Loader2 className="w-5 h-5 animate-spin text-yellow-500" />
                           <div>
-                            <p className="text-sm font-medium">Awaiting blockchain confirmation...</p>
+                            <p className="text-sm font-medium">Awaiting admin confirmation...</p>
                             <p className="text-xs text-muted-foreground mt-0.5">TX: <code className="font-mono">{activeDeposit.txHash}</code></p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Your balance will be credited once an admin verifies your transaction.</p>
                           </div>
                         </div>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full border-green-500/30 text-green-500 hover:bg-green-500/10"
-                        onClick={() => simulateConfirmMutation.mutate(activeDeposit.id)}
-                        disabled={simulateConfirmMutation.isPending}
-                        data-testid="button-simulate-confirm"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-                        {simulateConfirmMutation.isPending ? "Confirming..." : "Simulate Confirmation (Demo)"}
-                      </Button>
                     </div>
                   )}
                 </CardContent>

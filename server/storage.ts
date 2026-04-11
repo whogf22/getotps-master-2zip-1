@@ -136,7 +136,7 @@ function seedSettings() {
 async function seedDatabase() {
   const existingAdmin = db.select().from(users).where(eq(users.email, "admin@getotps.com")).get();
   if (!existingAdmin) {
-    const hashedPassword = await bcrypt.hash("admin123", 10);
+    const hashedPassword = await bcrypt.hash("admin123", 12);
     const apiKey = crypto.randomBytes(32).toString("hex");
     db.insert(users).values({
       username: "admin",
@@ -146,7 +146,11 @@ async function seedDatabase() {
       apiKey,
       role: "admin",
     }).run();
-    console.log("Created default admin user: admin@getotps.com / admin123");
+    console.warn("============================================================");
+    console.warn("[SECURITY] Default admin user created: admin@getotps.com");
+    console.warn("[SECURITY] Default password: admin123");
+    console.warn("[SECURITY] CHANGE THIS PASSWORD IMMEDIATELY after first login!");
+    console.warn("============================================================");
   }
   seedSettings();
 }
