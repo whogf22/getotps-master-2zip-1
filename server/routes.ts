@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
+import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, friendlyError, type ProxnumService } from "./proxnum";
 import * as circle from "./circle";
 import { sendPasswordResetEmail } from "./email";
 import session from "express-session";
@@ -153,10 +153,68 @@ function parseId(param: string | string[]): number | null {
   return n;
 }
 
-const CRYPTO_RATES: Record<string, number> = {
+let liveCryptoRates: Record<string, number> = {
   BTC: 84250.00, ETH: 3420.00, USDT_TRC20: 1.00,
   USDT_ERC20: 1.00, USDC: 1.00, LTC: 92.50,
 };
+let cryptoRatesLastFetched = 0;
+const CRYPTO_RATES_CACHE_MS = 5 * 60 * 1000;
+
+async function fetchLiveCryptoRates(): Promise<Record<string, number>> {
+  const now = Date.now();
+  if (now - cryptoRatesLastFetched < CRYPTO_RATES_CACHE_MS) {
+    return liveCryptoRates;
+  }
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,litecoin,tether,usd-coin&vs_currencies=usd"
+    );
+    if (!res.ok) throw new Error(`CoinGecko API returned ${res.status}`);
+    const data = await res.json() as Record<string, { usd: number }>;
+    const newRates: Record<string, number> = {
+      BTC: data.bitcoin?.usd ?? liveCryptoRates.BTC,
+      ETH: data.ethereum?.usd ?? liveCryptoRates.ETH,
+      LTC: data.litecoin?.usd ?? liveCryptoRates.LTC,
+      USDT_TRC20: data.tether?.usd ?? 1.00,
+      USDT_ERC20: data.tether?.usd ?? 1.00,
+      USDC: data["usd-coin"]?.usd ?? 1.00,
+    };
+    liveCryptoRates = newRates;
+    cryptoRatesLastFetched = now;
+    console.log("[CRYPTO] Live rates updated:", JSON.stringify(newRates));
+    return newRates;
+  } catch (err) {
+    console.error("[CRYPTO] Failed to fetch live rates, using cached:", err);
+    return liveCryptoRates;
+  }
+}
+
+function startExpiredDepositCleanup() {
+  const CLEANUP_INTERVAL_MS = 2 * 60 * 1000;
+
+  const cleanup = async () => {
+    try {
+      const now = new Date().toISOString();
+      const pendingDeposits = await storage.getAllPendingCryptoDeposits();
+      for (const deposit of pendingDeposits) {
+        if (deposit.expiresAt && deposit.expiresAt < now) {
+          try {
+            await storage.updateCryptoDeposit(deposit.id, { status: "expired" });
+            console.log(`[CLEANUP] Expired deposit #${deposit.id} for user ${deposit.userId}`);
+          } catch (err) {
+            console.error(`[CLEANUP] Failed to expire deposit #${deposit.id}:`, err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[CLEANUP] Expired deposit cleanup error:", err);
+    }
+  };
+
+  setInterval(cleanup, CLEANUP_INTERVAL_MS);
+  setTimeout(cleanup, 10000);
+  console.log("Expired deposit cleanup started (every 2 min)");
+}
 
 function startExpiredOrderCleanup() {
   const CLEANUP_INTERVAL_MS = 60 * 1000;
@@ -482,8 +540,7 @@ export async function registerRoutes(
   app.post("/api/orders", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
-      const { serviceId, serviceName, country } = req.body;
-      const orderCountry = country || "us";
+      const { serviceId, serviceName } = req.body;
 
       if (!serviceId && !serviceName) return res.status(400).json({ message: "serviceId or serviceName required" });
 
@@ -507,7 +564,7 @@ export async function registerRoutes(
       if (parseFloat(freshUser.balance) < price) return res.status(400).json({ message: "Insufficient balance" });
 
       const countries = await getCachedCountries();
-      const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
+      const resolvedCountry = getUSCountryCode(countries);
 
       const priceCheck = await proxnumApi.getResellPrice(service.slug, resolvedCountry);
       if (!priceCheck.success) {
@@ -746,8 +803,7 @@ export async function registerRoutes(
   app.post("/api/rentals", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
-      const { serviceId, serviceName, country, days } = req.body;
-      const rentalCountry = country || "us";
+      const { serviceId, serviceName, days } = req.body;
       const rentalDays = days || 7;
 
       if (!serviceId && !serviceName) return res.status(400).json({ message: "serviceId or serviceName required" });
@@ -764,7 +820,7 @@ export async function registerRoutes(
       if (!freshUser) return res.status(404).json({ message: "User not found" });
 
       const countries = await getCachedCountries();
-      const resolvedCountry = findCountryCode(countries, rentalCountry) || getUSCountryCode(countries);
+      const resolvedCountry = getUSCountryCode(countries);
 
       let rentalPriceData;
       try {
@@ -950,6 +1006,16 @@ export async function registerRoutes(
     res.json({ configured: circle.isCircleConfigured() });
   });
 
+  app.get("/api/deposit-method", requireAuth, (_req, res) => {
+    const circleConfigured = circle.isCircleConfigured();
+    const hasManualWallets = Object.keys(CRYPTO_WALLETS).length > 0;
+    res.json({
+      method: circleConfigured ? "circle" : hasManualWallets ? "manual" : "none",
+      circleConfigured,
+      hasManualWallets,
+    });
+  });
+
   app.get("/api/circle/wallet", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
@@ -1119,16 +1185,17 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/crypto/currencies", requireAuth, (_req, res) => {
+  app.get("/api/crypto/currencies", requireAuth, async (_req, res) => {
     if (circle.isCircleConfigured()) {
       return res.json([]);
     }
+    const rates = await fetchLiveCryptoRates();
     const currencies = Object.entries(CRYPTO_WALLETS).map(([key, address]) => ({
       id: key,
       name: key === "USDT_TRC20" ? "USDT (TRC20)" : key === "USDT_ERC20" ? "USDT (ERC20)" : key,
       network: key === "BTC" ? "Bitcoin" : key === "ETH" ? "Ethereum" : key === "USDT_TRC20" ? "Tron" : key === "USDT_ERC20" ? "Ethereum" : key === "USDC" ? "Ethereum" : key === "LTC" ? "Litecoin" : "",
       address,
-      rate: CRYPTO_RATES[key],
+      rate: rates[key] ?? 1,
     }));
     res.json(currencies);
   });
@@ -1146,7 +1213,8 @@ export async function registerRoutes(
       if (usdAmount > MAX_DEPOSIT_USD) return res.status(400).json({ message: `Maximum deposit is $${MAX_DEPOSIT_USD}` });
       const walletAddress = CRYPTO_WALLETS[currency];
       if (!walletAddress) return res.status(400).json({ message: "Unsupported currency" });
-      const rate = CRYPTO_RATES[currency];
+      const rates = await fetchLiveCryptoRates();
+      const rate = rates[currency] ?? 1;
       const cryptoAmount = (usdAmount / rate).toFixed(8);
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 60 * 1000);
@@ -1553,8 +1621,7 @@ export async function registerRoutes(
   app.post("/api/v1/order", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
-      const { service, country } = req.body;
-      const orderCountry = country || "us";
+      const { service } = req.body;
       if (!service) return res.status(400).json({ error: "service name required" });
 
       const allServices = await storage.getAllServices();
@@ -1568,7 +1635,7 @@ export async function registerRoutes(
       if (balance < price) return res.status(400).json({ error: "Insufficient balance" });
 
       const countries = await getCachedCountries();
-      const resolvedCountry = findCountryCode(countries, orderCountry) || getUSCountryCode(countries);
+      const resolvedCountry = getUSCountryCode(countries);
 
       const priceCheck = await proxnumApi.getResellPrice(svc.slug, resolvedCountry);
       if (!priceCheck.success) {
@@ -1744,8 +1811,7 @@ export async function registerRoutes(
   app.post("/api/v1/rental", apiKeyLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
-      const { service, country, days } = req.body;
-      const rentalCountry = country || "us";
+      const { service, days } = req.body;
       const rentalDays = days || 7;
       if (!service) return res.status(400).json({ error: "service name required" });
 
@@ -1755,6 +1821,9 @@ export async function registerRoutes(
 
       const freshUser = await storage.getUser(user.id);
       if (!freshUser) return res.status(404).json({ error: "User not found" });
+
+      const countries = await getCachedCountries();
+      const rentalCountry = getUSCountryCode(countries);
 
       const baseDayPrice = parseFloat(svc.price) * 2;
       const totalBase = baseDayPrice * rentalDays;
@@ -1888,6 +1957,7 @@ export async function registerRoutes(
   });
 
   startExpiredOrderCleanup();
+  startExpiredDepositCleanup();
 
   if (circle.isCircleConfigured()) {
     const CIRCLE_POLL_INTERVAL_MS = 2 * 60 * 1000;

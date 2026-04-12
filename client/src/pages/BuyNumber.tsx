@@ -10,14 +10,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { Search, Globe, CheckCircle, AlertCircle } from "lucide-react";
+import { Search, CheckCircle } from "lucide-react";
 
 const CATEGORY_ORDER = ["Messaging", "Social", "Tech", "Finance", "Crypto", "Shopping", "Food", "Transport", "Travel", "Entertainment", "Dating", "Other"];
 
 export default function BuyNumber() {
   const [search, setSearch] = useState("");
   const [selectedService, setSelectedService] = useState<any>(null);
-  const [selectedCountry, setSelectedCountry] = useState("US");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const { toast } = useToast();
   const { refreshUser } = useAuth();
@@ -28,22 +27,8 @@ export default function BuyNumber() {
     queryKey: ["/api/services"],
   });
 
-  const { data: apiCountries } = useQuery<any[]>({
-    queryKey: ["/api/countries"],
-  });
-
-  const countries = apiCountries && apiCountries.length > 0
-    ? apiCountries.map((c: any) => ({
-        code: c.code || c.id,
-        name: c.name,
-        flag: c.flag || "",
-      }))
-    : [
-        { code: "US", name: "United States", flag: "" },
-      ];
-
   const buyMutation = useMutation({
-    mutationFn: async (serviceId: number) => { const res = await apiRequest("POST", "/api/orders", { serviceId, country: selectedCountry }); return res.json(); },
+    mutationFn: async (serviceId: number) => { const res = await apiRequest("POST", "/api/orders", { serviceId, country: "US" }); return res.json(); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
@@ -69,8 +54,6 @@ export default function BuyNumber() {
   const getInitials = (name: string) => {
     return name.slice(0, 2).toUpperCase();
   };
-
-  const selectedCountryData = countries.find(c => c.code === selectedCountry) || countries[0];
 
   return (
     <DashboardLayout>
@@ -169,33 +152,6 @@ export default function BuyNumber() {
           <div className="space-y-4">
             <Card className="border-border">
               <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-primary" />
-                  Country
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 max-h-64 overflow-y-auto">
-                {countries.map((c: any) => (
-                  <button
-                    key={c.code}
-                    onClick={() => setSelectedCountry(c.code)}
-                    className={`flex items-center gap-3 w-full p-2.5 rounded-lg border text-left transition-all
-                      ${selectedCountry === c.code ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}
-                    `}
-                    data-testid={`button-country-${c.code}`}
-                  >
-                    {c.flag && <span className="text-base">{c.flag}</span>}
-                    <span className="text-sm flex-1 truncate">{c.name}</span>
-                    {selectedCountry === c.code && (
-                      <CheckCircle className="w-3.5 h-3.5 text-primary ml-auto shrink-0" />
-                    )}
-                  </button>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border">
-              <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold">Order Summary</CardTitle>
               </CardHeader>
               <CardContent>
@@ -209,7 +165,7 @@ export default function BuyNumber() {
                       </span>
                       <div>
                         <p className="text-sm font-semibold">{selectedService.name}</p>
-                        <p className="text-xs text-muted-foreground">{selectedCountryData?.name || "US"} number · 20 min</p>
+                        <p className="text-xs text-muted-foreground">United States number · 20 min</p>
                       </div>
                     </div>
                     <div className="space-y-1.5 text-sm">
@@ -219,7 +175,7 @@ export default function BuyNumber() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground text-xs">Country</span>
-                        <span className="text-xs font-medium">{selectedCountryData?.flag} {selectedCountryData?.name || "US"}</span>
+                        <span className="text-xs font-medium">United States</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground text-xs">Duration</span>

@@ -15,7 +15,7 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 - **API Client**: `server/proxnum.ts` — typed wrapper with caching, 15s timeouts, 2 retries with exponential backoff
 - **Auth**: Bearer token via `Authorization: Bearer {PROXNUM_API_KEY}` + `Accept: application/json` header
 - **Service Sync**: On startup, fetches all services and aggregated prices from Proxnum, applies global markup multiplier, upserts into DB
-- **Country Codes**: Proxnum uses numeric country codes (e.g., "12" = USA virtual, "187" = USA, "0" = Russia). Resolved via `findCountryCode()`
+- **Country Codes**: Proxnum uses numeric country codes (e.g., "12" = USA virtual, "187" = USA). Platform is USA-only — country is hardcoded via `getUSCountryCode()`
 - **Price Markup**: `finalPrice = basePrice × globalMultiplier × serviceMultiplier` — settings stored in DB `settings` table
 - **Virtual Numbers (Reseller Endpoints)**:
   - `POST /resell/virtual/buy` — body: `{service, country}` → response: `{success, activation: {id, phone, activation_id, msg, amount_paid, status}}`
@@ -35,7 +35,9 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 - **User Flow**: Each user gets a unique Ethereum wallet address for USDC deposits via Circle
 - **Auto-detection**: `POST /api/circle/check-deposits` polls Circle for inbound USDC transfers, filters USDC-only by tokenSymbol/tokenName, deduplicates by circleTransferId+txHash, and auto-credits user balance
 - **Auto-wallet**: When Circle is configured, `GET /api/circle/wallet` auto-creates a wallet on first visit (no manual button needed)
-- **Fallback**: When Circle is not configured (missing env vars), the Add Funds page falls back to manual crypto deposit (static wallets + admin confirmation). When Circle IS configured, manual crypto endpoints are disabled and the UI only shows Circle USDC deposits.
+- **Deposit Method Detection**: `GET /api/deposit-method` returns which method is active (circle/manual/none). Frontend renders only the working method — no broken UI or confusing fallback links.
+- **Fallback**: When Circle is not configured (missing env vars), the Add Funds page falls back to manual crypto deposit (static wallets + admin confirmation). When Circle IS configured, manual crypto endpoints are disabled and the UI only shows Circle USDC deposits. If neither is configured, a clear "deposits unavailable" message is shown.
+- **Live Crypto Rates**: BTC, ETH, LTC, USDT, USDC prices fetched from CoinGecko API and cached for 5 minutes (replaces old hardcoded rates).
 - **Background polling**: Server polls Circle every 2 minutes for all users with wallets (batched 5 at a time), auto-crediting confirmed USDC deposits without user action.
 - **DB Fields**: `users.circle_wallet_id`, `users.circle_wallet_address`, `crypto_deposits.circle_transfer_id` — stores per-user Circle wallet info and transfer dedup
 - **Endpoints**: `GET /api/circle/configured`, `GET /api/circle/wallet`, `POST /api/circle/wallet/create`, `POST /api/circle/check-deposits`
@@ -68,7 +70,7 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 client/src/
   pages/Landing.tsx          - Main landing page with GlowCard, Reveal, parallax hero
   pages/Dashboard.tsx        - User dashboard overview
-  pages/BuyNumber.tsx        - Service selection with dynamic countries from API
+  pages/BuyNumber.tsx        - Service selection (USA-only, no country selector)
   pages/ActiveNumbers.tsx    - Active OTP orders with SMS polling
   pages/Rentals.tsx          - Long-term rental management with messages
   pages/ForgotPassword.tsx   - Password reset flow (request + reset)
@@ -126,6 +128,7 @@ scripts/
 - **Atomic balance operations**: `atomicDeductBalance()` and `atomicAddBalance()` use single SQL UPDATE with RETURNING
 - **Transactional refunds**: `transactionalCancelAndRefund`, `transactionalRentalCancelAndRefund`, `transactionalExpireAndRefund`, `transactionalConfirmDeposit`
 - **Expired order cleanup**: Background job runs every 60s, auto-refunds expired orders
+- **Expired deposit cleanup**: Background job runs every 2 min, marks stale pending deposits as expired
 - **FK pragma**: SQLite foreign key enforcement enabled
 - **Input validation**: `parseId()` validates all route params; password min 8 chars; email format validation
 - **Deposit caps**: Max $10,000 per crypto deposit

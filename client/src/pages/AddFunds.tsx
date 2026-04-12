@@ -24,6 +24,7 @@ import {
   Wallet,
   RefreshCw,
   Shield,
+  Ban,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -40,6 +41,12 @@ type CryptoCurrency = {
   network: string;
   address: string;
   rate: number;
+};
+
+type DepositMethod = {
+  method: "circle" | "manual" | "none";
+  circleConfigured: boolean;
+  hasManualWallets: boolean;
 };
 
 const PRESET_AMOUNTS = [5, 10, 25, 50, 100];
@@ -63,7 +70,6 @@ const CRYPTO_COLORS: Record<string, string> = {
 };
 
 export default function AddFunds() {
-  const [depositMethod, setDepositMethod] = useState<"circle" | "manual">("circle");
   const [selectedCurrency, setSelectedCurrency] = useState<string>("USDT_TRC20");
   const [selectedAmount, setSelectedAmount] = useState<number>(10);
   const [customAmount, setCustomAmount] = useState("");
@@ -76,17 +82,20 @@ export default function AddFunds() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: circleConfig } = useQuery<{ configured: boolean }>({
-    queryKey: ["/api/circle/configured"],
+  const { data: depositMethodInfo, isLoading: methodLoading } = useQuery<DepositMethod>({
+    queryKey: ["/api/deposit-method"],
   });
+
+  const activeMethod = depositMethodInfo?.method ?? null;
 
   const { data: circleWallet, isLoading: walletLoading } = useQuery<CircleWallet>({
     queryKey: ["/api/circle/wallet"],
-    enabled: circleConfig?.configured === true,
+    enabled: activeMethod === "circle",
   });
 
   const { data: currencies, isLoading: currLoading } = useQuery<CryptoCurrency[]>({
     queryKey: ["/api/crypto/currencies"],
+    enabled: activeMethod === "manual",
   });
 
   const { data: deposits, isLoading: depLoading } = useQuery<any[]>({
@@ -166,12 +175,6 @@ export default function AddFunds() {
     },
   });
 
-  useEffect(() => {
-    if (circleConfig?.configured === false) {
-      setDepositMethod("manual");
-    }
-  }, [circleConfig]);
-
   const effectiveAmount = isCustom ? parseFloat(customAmount) : selectedAmount;
   const selectedCurrencyData = currencies?.find(c => c.id === selectedCurrency);
   const cryptoAmount = selectedCurrencyData ? (effectiveAmount / selectedCurrencyData.rate).toFixed(8) : "0";
@@ -235,18 +238,30 @@ export default function AddFunds() {
               </CardContent>
             </Card>
 
-            {!circleConfig?.configured && depositMethod === "circle" && (
-              <div className="flex justify-end">
-                <button
-                  onClick={() => setDepositMethod("manual")}
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
-                >
-                  Use manual crypto deposit instead
-                </button>
+            {methodLoading && (
+              <div className="space-y-3">
+                <Skeleton className="h-32 w-full" />
+                <Skeleton className="h-8 w-48" />
               </div>
             )}
 
-            {depositMethod === "circle" && circleConfig?.configured && (
+            {activeMethod === "none" && (
+              <Card className="border-destructive/30 bg-destructive/5">
+                <CardContent className="p-8 text-center space-y-4">
+                  <div className="w-16 h-16 rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto">
+                    <Ban className="w-8 h-8 text-destructive" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold mb-1">Deposits Currently Unavailable</p>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                      No deposit methods are configured at this time. Please contact support for assistance with adding funds to your account.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {activeMethod === "circle" && (
               <Card className="border-blue-500/30 bg-blue-500/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -351,9 +366,9 @@ export default function AddFunds() {
               </Card>
             )}
 
-            {depositMethod === "manual" && !circleConfig?.configured && (
+            {activeMethod === "manual" && (
               <>
-                {activeDeposit && activeDeposit.status !== "completed" && (
+                {activeDeposit && activeDeposit.status !== "completed" && activeDeposit.status !== "expired" && (
                   <Card className="border-primary/30 bg-primary/5">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -432,7 +447,7 @@ export default function AddFunds() {
                   </Card>
                 )}
 
-                {(!activeDeposit || activeDeposit.status === "completed") && (
+                {(!activeDeposit || activeDeposit.status === "completed" || activeDeposit.status === "expired") && (
                   <>
                     <Card className="border-border">
                       <CardHeader className="pb-3">
@@ -443,6 +458,8 @@ export default function AddFunds() {
                           <div className="grid grid-cols-3 gap-2">
                             {[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-16" />)}
                           </div>
+                        ) : !currencies || currencies.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-6">No cryptocurrencies available for deposit.</p>
                         ) : (
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                             {currencies?.map(c => (
@@ -555,7 +572,7 @@ export default function AddFunds() {
                         key={dep.id}
                         className="flex items-center gap-3 py-2.5 border-b border-border last:border-0 cursor-pointer hover:bg-muted/30 rounded-md px-1.5 -mx-1.5 transition-colors"
                         onClick={() => {
-                          if (dep.status !== "completed" && dep.status !== "expired" && depositMethod === "manual") {
+                          if (dep.status !== "completed" && dep.status !== "expired" && activeMethod === "manual") {
                             setActiveDeposit(dep);
                           }
                         }}
