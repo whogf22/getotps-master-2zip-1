@@ -190,6 +190,11 @@ export default function Landing() {
   const [mx, setMx] = useState(0);
   const [my, setMy] = useState(0);
 
+  const { data: publicStats } = useQuery<{ totalOrders: number; totalUsers: number; totalCountries: number }>({
+    queryKey: ["/api/stats"],
+    refetchInterval: 120000,
+  });
+
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 30);
     window.addEventListener("scroll", fn, { passive: true });
@@ -248,7 +253,7 @@ export default function Landing() {
           <div className="l-hero-left" style={{ transform: `translate(${mx * -4}px, ${my * -3}px)` }}>
             <div className="l-badge">
               <span className="l-badge-dot" />
-              Live Network · 50+ Countries · 500+ Services
+              Live Network · {publicStats?.totalCountries || 50}+ Countries · 1000+ Services
             </div>
 
             <h1 className="l-hero-h1">

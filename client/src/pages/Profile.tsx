@@ -9,26 +9,32 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { User, Key, Lock, Copy, Check, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { User, Key, Lock, Copy, Check, RefreshCw, Eye, EyeOff, Save, AlertTriangle } from "lucide-react";
 
 export default function Profile() {
   const { user, refreshUser } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [copiedKey, setCopiedKey] = useState(false);
-  const [showKey, setShowKey] = useState(false);
+  const [newlyGeneratedKey, setNewlyGeneratedKey] = useState<string | null>(null);
+  const [showRegenConfirm, setShowRegenConfirm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
+  const [editUsername, setEditUsername] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
 
   const generateKeyMutation = useMutation({
     mutationFn: async () => { const res = await apiRequest("POST", "/api/profile/generate-api-key", {}); return res.json(); },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       refreshUser();
-      toast({ title: "New API key generated", description: "Your old key has been invalidated." });
+      setNewlyGeneratedKey(data.apiKey);
+      setShowRegenConfirm(false);
+      toast({ title: "New API key generated", description: "Copy it now — it won't be shown again." });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -48,9 +54,29 @@ export default function Profile() {
     },
   });
 
+  const updateProfileMutation = useMutation({
+    mutationFn: async () => {
+      const updates: any = {};
+      if (editUsername && editUsername !== user?.username) updates.username = editUsername;
+      if (editEmail && editEmail !== user?.email) updates.email = editEmail;
+      const res = await apiRequest("PUT", "/api/profile", updates);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      refreshUser();
+      setIsEditing(false);
+      toast({ title: "Profile updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const handleCopyKey = async () => {
-    if (user?.apiKey) {
-      await navigator.clipboard.writeText(user.apiKey);
+    const keyToCopy = newlyGeneratedKey;
+    if (keyToCopy) {
+      await navigator.clipboard.writeText(keyToCopy);
       setCopiedKey(true);
       setTimeout(() => setCopiedKey(false), 2000);
     }
@@ -65,18 +91,25 @@ export default function Profile() {
       toast({ title: "Error", description: "Passwords don't match", variant: "destructive" });
       return;
     }
-    if (newPassword.length < 6) {
-      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
+    if (newPassword.length < 8) {
+      toast({ title: "Error", description: "Password must be at least 8 characters", variant: "destructive" });
       return;
     }
     changePasswordMutation.mutate();
   };
 
-  const maskedKey = user?.apiKey
-    ? showKey
-      ? user.apiKey
-      : `${user.apiKey.slice(0, 8)}${"•".repeat(24)}${user.apiKey.slice(-4)}`
-    : "No API key generated";
+  const handleStartEdit = () => {
+    setEditUsername(user?.username || "");
+    setEditEmail(user?.email || "");
+    setIsEditing(true);
+  };
+
+  const apiKeyPrefix = (user as any)?.apiKeyPrefix;
+  const displayKey = newlyGeneratedKey
+    ? newlyGeneratedKey
+    : apiKeyPrefix
+      ? `${apiKeyPrefix}...`
+      : "No API key generated";
 
   return (
     <DashboardLayout>
@@ -86,13 +119,19 @@ export default function Profile() {
           <p className="text-sm text-muted-foreground mt-0.5">Manage your account settings</p>
         </div>
 
-        {/* User Info */}
         <Card className="border-border">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <User className="w-4 h-4 text-primary" />
-              Account Details
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <User className="w-4 h-4 text-primary" />
+                Account Details
+              </CardTitle>
+              {!isEditing && (
+                <Button variant="ghost" size="sm" onClick={handleStartEdit} className="text-xs h-7">
+                  Edit
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
@@ -111,20 +150,39 @@ export default function Profile() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-xs text-muted-foreground">Username</Label>
-                <Input value={user?.username || ""} disabled className="h-8 mt-1 text-sm" />
+            {isEditing ? (
+              <div className="space-y-3 pt-2">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Username</Label>
+                  <Input value={editUsername} onChange={e => setEditUsername(e.target.value)} className="h-8 mt-1 text-sm" />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Email</Label>
+                  <Input value={editEmail} onChange={e => setEditEmail(e.target.value)} className="h-8 mt-1 text-sm" />
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => updateProfileMutation.mutate()} disabled={updateProfileMutation.isPending}>
+                    <Save className="w-3.5 h-3.5 mr-1.5" />
+                    {updateProfileMutation.isPending ? "Saving..." : "Save"}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setIsEditing(false)}>Cancel</Button>
+                </div>
               </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Email</Label>
-                <Input value={user?.email || ""} disabled className="h-8 mt-1 text-sm" />
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Username</Label>
+                  <Input value={user?.username || ""} disabled className="h-8 mt-1 text-sm" />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Email</Label>
+                  <Input value={user?.email || ""} disabled className="h-8 mt-1 text-sm" />
+                </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* API Key */}
         <Card className="border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -135,15 +193,8 @@ export default function Profile() {
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">Use this key to authenticate API requests. Keep it secret.</p>
             <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50 border border-border">
-              <code className="flex-1 font-mono text-xs truncate" data-testid="text-api-key-profile">{maskedKey}</code>
-              <button
-                onClick={() => setShowKey(!showKey)}
-                className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                data-testid="button-toggle-key-visibility"
-              >
-                {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              </button>
-              {user?.apiKey && (
+              <code className="flex-1 font-mono text-xs truncate" data-testid="text-api-key-profile">{displayKey}</code>
+              {newlyGeneratedKey && (
                 <button
                   onClick={handleCopyKey}
                   className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors shrink-0"
@@ -153,20 +204,38 @@ export default function Profile() {
                 </button>
               )}
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => generateKeyMutation.mutate()}
-              disabled={generateKeyMutation.isPending}
-              data-testid="button-generate-api-key"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${generateKeyMutation.isPending ? "animate-spin" : ""}`} />
-              {user?.apiKey ? "Regenerate API Key" : "Generate API Key"}
-            </Button>
+            {newlyGeneratedKey && (
+              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 mt-0.5 shrink-0" />
+                <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                  Copy this key now. It will not be shown again after you leave this page.
+                </p>
+              </div>
+            )}
+
+            {showRegenConfirm ? (
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-destructive flex-1">This will invalidate your current key. Are you sure?</p>
+                <Button size="sm" variant="destructive" onClick={() => generateKeyMutation.mutate()} disabled={generateKeyMutation.isPending}>
+                  {generateKeyMutation.isPending ? "Generating..." : "Confirm"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowRegenConfirm(false)}>Cancel</Button>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => apiKeyPrefix ? setShowRegenConfirm(true) : generateKeyMutation.mutate()}
+                disabled={generateKeyMutation.isPending}
+                data-testid="button-generate-api-key"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${generateKeyMutation.isPending ? "animate-spin" : ""}`} />
+                {apiKeyPrefix ? "Regenerate API Key" : "Generate API Key"}
+              </Button>
+            )}
           </CardContent>
         </Card>
 
-        {/* Change Password */}
         <Card className="border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -203,7 +272,7 @@ export default function Profile() {
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
                   className="h-9 pr-10 text-sm"
-                  placeholder="Min. 6 characters"
+                  placeholder="Min. 8 characters"
                   data-testid="input-new-password"
                 />
                 <button

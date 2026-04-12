@@ -6,10 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Search, Plus, X, DollarSign } from "lucide-react";
+import { Users, Search, Plus, X, DollarSign, Ban, CheckCircle, Download } from "lucide-react";
 import type { AdminUser } from "@/types/admin";
 
 function getUserStatus(user: AdminUser): { label: string; cls: string; dotCls: string } {
+  if (user.status === "suspended") {
+    return { label: "Suspended", cls: "bg-red-500/15 text-red-500", dotCls: "bg-red-500" };
+  }
   if (!user.orderCount || user.orderCount === 0) {
     return { label: "New", cls: "bg-blue-500/15 text-blue-500", dotCls: "bg-blue-500" };
   }
@@ -33,6 +36,35 @@ export default function AdminUsers() {
   const { data: users, isLoading } = useQuery<AdminUser[]>({
     queryKey: ["/api/admin/users"],
   });
+
+  const suspendMutation = useMutation({
+    mutationFn: async (userId: number) => {
+      const res = await apiRequest("POST", `/api/admin/users/${userId}/suspend`);
+      return res.json();
+    },
+    onSuccess: (data: { message: string; status: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: data.status === "suspended" ? "User Suspended" : "User Activated", description: data.message });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message || "Failed to update user status", variant: "destructive" });
+    },
+  });
+
+  const handleExport = async (type: "users" | "orders" | "transactions") => {
+    try {
+      const res = await apiRequest("GET", `/api/admin/export/${type}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${type}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: "Export failed", variant: "destructive" });
+    }
+  };
 
   const addBalanceMutation = useMutation({
     mutationFn: async ({ userId, amount, description }: { userId: number; amount: string; description: string }) => {
@@ -65,7 +97,7 @@ export default function AdminUsers() {
           <p className="text-sm text-muted-foreground mt-1">View and manage all registered users</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -77,6 +109,17 @@ export default function AdminUsers() {
           </div>
           <div className="px-3 py-1.5 rounded-lg bg-muted text-xs font-medium text-muted-foreground">
             {filtered.length} user{filtered.length !== 1 ? "s" : ""}
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button variant="outline" size="sm" className="h-8 text-xs rounded-lg gap-1.5" onClick={() => handleExport("users")}>
+              <Download className="w-3.5 h-3.5" /> Users CSV
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 text-xs rounded-lg gap-1.5" onClick={() => handleExport("orders")}>
+              <Download className="w-3.5 h-3.5" /> Orders CSV
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 text-xs rounded-lg gap-1.5" onClick={() => handleExport("transactions")}>
+              <Download className="w-3.5 h-3.5" /> Transactions CSV
+            </Button>
           </div>
         </div>
 
@@ -145,14 +188,35 @@ export default function AdminUsers() {
                           <span className="text-sm font-bold text-primary tabular-nums">${u.balance}</span>
                         </td>
                         <td className="px-5 py-4 text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 text-xs rounded-lg gap-1.5"
-                            onClick={() => setBalanceModal(u)}
-                          >
-                            <Plus className="w-3.5 h-3.5" /> Add Balance
-                          </Button>
+                          <div className="flex items-center justify-end gap-2">
+                            {u.role !== "admin" && (
+                              <Button
+                                size="sm"
+                                variant={u.status === "suspended" ? "default" : "destructive"}
+                                className="h-8 text-xs rounded-lg gap-1.5"
+                                disabled={suspendMutation.isPending}
+                                onClick={() => {
+                                  if (confirm(`${u.status === "suspended" ? "Activate" : "Suspend"} user ${u.username}?`)) {
+                                    suspendMutation.mutate(u.id);
+                                  }
+                                }}
+                              >
+                                {u.status === "suspended" ? (
+                                  <><CheckCircle className="w-3.5 h-3.5" /> Activate</>
+                                ) : (
+                                  <><Ban className="w-3.5 h-3.5" /> Suspend</>
+                                )}
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs rounded-lg gap-1.5"
+                              onClick={() => setBalanceModal(u)}
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Add Balance
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );

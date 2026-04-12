@@ -28,8 +28,9 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/buy", label: "Buy Number", icon: ShoppingCart },
   { href: "/active", label: "Active Numbers", icon: Phone },
+  { href: "/rentals", label: "Rentals", icon: CreditCard },
   { href: "/history", label: "Order History", icon: History },
-  { href: "/funds", label: "Add Funds", icon: CreditCard },
+  { href: "/funds", label: "Add Funds", icon: Wallet },
   { href: "/api-docs", label: "API Docs", icon: BookOpen },
   { href: "/profile", label: "Profile", icon: User },
 ];

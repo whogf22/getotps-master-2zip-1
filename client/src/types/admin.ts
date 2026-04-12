@@ -18,8 +18,19 @@ export interface AdminUser {
   balance: string;
   apiKey: string | null;
   role: string;
+  status?: string;
   orderCount?: number;
   lastOrderAt?: string | null;
+}
+
+export interface AuditLog {
+  id: number;
+  adminId: number;
+  action: string;
+  targetType: string;
+  targetId: number;
+  details: string | null;
+  createdAt: string;
 }
 
 export interface AdminTransaction {

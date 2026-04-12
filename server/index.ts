@@ -4,6 +4,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import helmet from "helmet";
 import compression from "compression";
+import crypto from "crypto";
 
 const app = express();
 const httpServer = createServer(app);
@@ -15,6 +16,8 @@ declare module "http" {
 }
 
 const isProduction = process.env.NODE_ENV === "production";
+
+app.set("trust proxy", 1);
 
 app.use(compression());
 
@@ -49,9 +52,67 @@ app.use(
 
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
+app.get("/api/csrf-token", (req, res) => {
+  let token = (req as any).cookies?.["csrf-token"];
+  if (!token) {
+    token = crypto.randomBytes(32).toString("hex");
+  }
+  res.cookie("csrf-token", token, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: isProduction,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: "/",
+  });
+  res.json({ csrfToken: token });
+});
+
+const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const CSRF_EXEMPT_PATHS = ["/api/v1/", "/api/health", "/api/csrf-token", "/api/auth/login", "/api/auth/register", "/api/auth/forgot-password", "/api/auth/reset-password"];
+
+app.use((req, res, next) => {
+  if (CSRF_SAFE_METHODS.has(req.method)) return next();
+  if (CSRF_EXEMPT_PATHS.some(p => req.path.startsWith(p))) return next();
+  if (req.headers["x-api-key"]) return next();
+
+  const cookieHeader = req.headers.cookie || "";
+  const cookieToken = cookieHeader.split(";").map(c => c.trim()).find(c => c.startsWith("csrf-token="))?.split("=")[1];
+  const headerToken = req.headers["x-csrf-token"] as string;
+
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return res.status(403).json({ message: "CSRF token mismatch" });
+  }
+  next();
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
+
+const SENSITIVE_KEYS = new Set([
+  "apikey", "api_key", "token", "password", "secret",
+  "authorization", "cookie", "sessionid", "balance",
+  "apiKey", "hash", "txHash", "tx_hash",
+]);
+
+function sanitizeForLogging(obj: any, depth = 0): any {
+  if (depth > 5 || obj === null || obj === undefined) return obj;
+  if (typeof obj === "string") return obj.length > 200 ? obj.slice(0, 200) + "..." : obj;
+  if (typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) {
+    if (obj.length > 5) return `[Array(${obj.length})]`;
+    return obj.map(item => sanitizeForLogging(item, depth + 1));
+  }
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (SENSITIVE_KEYS.has(key) || SENSITIVE_KEYS.has(key.toLowerCase())) {
+      sanitized[key] = "[REDACTED]";
+    } else {
+      sanitized[key] = sanitizeForLogging(value, depth + 1);
+    }
+  }
+  return sanitized;
+}
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -80,7 +141,8 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        const safe = sanitizeForLogging(capturedJsonResponse);
+        logLine += ` :: ${JSON.stringify(safe)}`;
       }
 
       log(logLine);

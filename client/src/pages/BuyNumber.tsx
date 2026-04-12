@@ -12,14 +12,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { Search, Globe, CheckCircle, AlertCircle } from "lucide-react";
 
-const COUNTRIES = [
-  { code: "US", name: "United States", flag: "🇺🇸" },
-  { code: "GB", name: "United Kingdom", flag: "🇬🇧", disabled: true },
-  { code: "CA", name: "Canada", flag: "🇨🇦", disabled: true },
-  { code: "AU", name: "Australia", flag: "🇦🇺", disabled: true },
-];
-
-// Category sort priority
 const CATEGORY_ORDER = ["Messaging", "Social", "Tech", "Finance", "Crypto", "Shopping", "Food", "Transport", "Travel", "Entertainment", "Dating", "Other"];
 
 export default function BuyNumber() {
@@ -36,8 +28,22 @@ export default function BuyNumber() {
     queryKey: ["/api/services"],
   });
 
+  const { data: apiCountries } = useQuery<any[]>({
+    queryKey: ["/api/countries"],
+  });
+
+  const countries = apiCountries && apiCountries.length > 0
+    ? apiCountries.map((c: any) => ({
+        code: c.code || c.id,
+        name: c.name,
+        flag: c.flag || "",
+      }))
+    : [
+        { code: "US", name: "United States", flag: "" },
+      ];
+
   const buyMutation = useMutation({
-    mutationFn: async (serviceId: number) => { const res = await apiRequest("POST", "/api/orders", { serviceId }); return res.json(); },
+    mutationFn: async (serviceId: number) => { const res = await apiRequest("POST", "/api/orders", { serviceId, country: selectedCountry }); return res.json(); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
@@ -64,21 +70,22 @@ export default function BuyNumber() {
     return name.slice(0, 2).toUpperCase();
   };
 
+  const selectedCountryData = countries.find(c => c.code === selectedCountry) || countries[0];
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div>
           <h1 className="text-xl font-bold">Buy Number</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Select a service to get a real US phone number</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Select a service to get a temporary phone number</p>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Service selector */}
           <div className="lg:col-span-2 space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search 700+ services..."
+                placeholder={`Search ${services?.length || 0}+ services...`}
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="pl-9 h-9"
@@ -86,7 +93,6 @@ export default function BuyNumber() {
               />
             </div>
 
-            {/* Category filter tabs */}
             {!search && (
               <div className="flex gap-1.5 flex-wrap">
                 <button
@@ -160,9 +166,7 @@ export default function BuyNumber() {
             )}
           </div>
 
-          {/* Right panel: country + order summary */}
           <div className="space-y-4">
-            {/* Country Selector */}
             <Card className="border-border">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -170,22 +174,19 @@ export default function BuyNumber() {
                   Country
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                {COUNTRIES.map(c => (
+              <CardContent className="space-y-2 max-h-64 overflow-y-auto">
+                {countries.map((c: any) => (
                   <button
                     key={c.code}
-                    disabled={c.disabled}
                     onClick={() => setSelectedCountry(c.code)}
                     className={`flex items-center gap-3 w-full p-2.5 rounded-lg border text-left transition-all
-                      ${c.disabled ? "opacity-40 cursor-not-allowed border-border" : ""}
-                      ${selectedCountry === c.code && !c.disabled ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}
+                      ${selectedCountry === c.code ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}
                     `}
                     data-testid={`button-country-${c.code}`}
                   >
-                    <span className="text-base">{c.flag}</span>
-                    <span className="text-sm">{c.name}</span>
-                    {c.disabled && <Badge variant="secondary" className="ml-auto text-xs h-5">Soon</Badge>}
-                    {selectedCountry === c.code && !c.disabled && (
+                    {c.flag && <span className="text-base">{c.flag}</span>}
+                    <span className="text-sm flex-1 truncate">{c.name}</span>
+                    {selectedCountry === c.code && (
                       <CheckCircle className="w-3.5 h-3.5 text-primary ml-auto shrink-0" />
                     )}
                   </button>
@@ -193,7 +194,6 @@ export default function BuyNumber() {
               </CardContent>
             </Card>
 
-            {/* Order Summary */}
             <Card className="border-border">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold">Order Summary</CardTitle>
@@ -209,7 +209,7 @@ export default function BuyNumber() {
                       </span>
                       <div>
                         <p className="text-sm font-semibold">{selectedService.name}</p>
-                        <p className="text-xs text-muted-foreground">US number · 20 min</p>
+                        <p className="text-xs text-muted-foreground">{selectedCountryData?.name || "US"} number · 20 min</p>
                       </div>
                     </div>
                     <div className="space-y-1.5 text-sm">
@@ -219,7 +219,7 @@ export default function BuyNumber() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground text-xs">Country</span>
-                        <span className="text-xs font-medium">🇺🇸 United States</span>
+                        <span className="text-xs font-medium">{selectedCountryData?.flag} {selectedCountryData?.name || "US"}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground text-xs">Duration</span>

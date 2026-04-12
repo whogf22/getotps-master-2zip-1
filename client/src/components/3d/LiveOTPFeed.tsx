@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 const SERVICES = [
   { name: "WhatsApp", emoji: "💬", color: "#25d366" },
@@ -82,8 +83,19 @@ export function LiveOTPTicker() {
 }
 
 export function NetworkStats() {
-  const [count, setCount] = useState(14291);
-  const [rate, setRate] = useState(99.97);
+  const { data: stats } = useQuery<{ totalOrders: number; totalUsers: number; totalCountries: number }>({
+    queryKey: ["/api/stats"],
+    refetchInterval: 60000,
+  });
+
+  const [count, setCount] = useState(0);
+  const [rate] = useState(99.97);
+
+  useEffect(() => {
+    if (stats?.totalOrders) {
+      setCount(stats.totalOrders);
+    }
+  }, [stats?.totalOrders]);
 
   useEffect(() => {
     const t = setInterval(() => {

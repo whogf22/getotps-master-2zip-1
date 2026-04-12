@@ -174,8 +174,7 @@ export default function ActiveNumbers() {
                       <CopyButton text={order.phoneNumber} />
                     </div>
 
-                    {/* SMS Status */}
-                    {order.status === "waiting" && (
+                    {(order.status === "waiting" || order.status === "pending") && (
                       <div className="flex items-center gap-2.5 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 mb-4">
                         <div className="w-5 h-5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin shrink-0" style={{ animationDuration: "1.5s" }} />
                         <div>
@@ -219,7 +218,7 @@ export default function ActiveNumbers() {
 
                     {/* Actions */}
                     <div className="flex gap-2">
-                      {order.status === "waiting" && (
+                      {(order.status === "waiting" || order.status === "pending") && (
                         <>
                           <Button
                             size="sm"

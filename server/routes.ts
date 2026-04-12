@@ -3,10 +3,13 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
 import * as circle from "./circle";
+import { sendPasswordResetEmail } from "./email";
 import session from "express-session";
+import createMemoryStore from "memorystore";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 
 declare module "express-session" {
@@ -49,7 +52,6 @@ async function calculatePrice(basePrice: number, service: string, country: strin
   return basePrice * globalMult * serviceMult;
 }
 
-/** Returns a safe error message — hides implementation details in production */
 function safeError(err: any, fallback = "An unexpected error occurred"): string {
   if (process.env.NODE_ENV !== "production") return err?.message || fallback;
   return fallback;
@@ -153,6 +155,35 @@ const CRYPTO_RATES: Record<string, number> = {
   USDT_ERC20: 1.00, USDC: 1.00, LTC: 92.50,
 };
 
+function startExpiredOrderCleanup() {
+  const CLEANUP_INTERVAL_MS = 60 * 1000;
+
+  const cleanup = async () => {
+    try {
+      const expired = await storage.getExpiredPendingOrders();
+      for (const order of expired) {
+        try {
+          const refundAmount = parseFloat(order.price);
+          if (isNaN(refundAmount) || refundAmount <= 0) {
+            await storage.updateOrderStatus(order.id, "expired");
+            continue;
+          }
+          await storage.transactionalExpireAndRefund(order.id, order.userId, refundAmount);
+          console.log(`[CLEANUP] Expired order #${order.id} - refunded $${refundAmount.toFixed(2)} to user ${order.userId}`);
+        } catch (err) {
+          console.error(`[CLEANUP] Failed to expire order #${order.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error("[CLEANUP] Expired order cleanup error:", err);
+    }
+  };
+
+  setInterval(cleanup, CLEANUP_INTERVAL_MS);
+  setTimeout(cleanup, 5000);
+  console.log("Expired order cleanup started (every 60s)");
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -167,7 +198,6 @@ export async function registerRoutes(
     console.warn("[SECURITY WARNING] SESSION_SECRET not set. Using insecure default for development only.");
   }
 
-  // Rate limiters — login is stricter to mitigate brute-force, registration slightly more permissive
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 10,
@@ -192,14 +222,21 @@ export async function registerRoutes(
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => {
-      return (req.headers["x-api-key"] as string) || req.ip || "unknown";
+      const apiKey = req.headers["x-api-key"] as string;
+      if (apiKey) return crypto.createHash("sha256").update(apiKey).digest("hex").slice(0, 16);
+      return "no-api-key";
     },
-    validate: { ip: false },
+    validate: false,
     message: { error: "Rate limit exceeded" },
   });
 
+  const MemoryStore = createMemoryStore(session);
+
   app.use(
     session({
+      store: new MemoryStore({
+        checkPeriod: 86400000,
+      }),
       secret: process.env.SESSION_SECRET || "dev-only-secret-change-in-production",
       resave: false,
       saveUninitialized: false,
@@ -220,6 +257,7 @@ export async function registerRoutes(
       try {
         const user = await storage.getUserByEmail(email);
         if (!user) return done(null, false, { message: "Invalid email or password" });
+        if ((user as any).status === "suspended") return done(null, false, { message: "Account suspended" });
         const isValid = await bcrypt.compare(password, user.password);
         if (!isValid) return done(null, false, { message: "Invalid email or password" });
         return done(null, user);
@@ -239,9 +277,18 @@ export async function registerRoutes(
     }
   });
 
-  function requireAuth(req: Request, res: Response, next: any) {
-    if (req.isAuthenticated()) return next();
-    res.status(401).json({ message: "Unauthorized" });
+  async function requireAuth(req: Request, res: Response, next: any) {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const user = req.user as any;
+    if (user?.id) {
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(401).json({ message: "Unauthorized" });
+      if ((freshUser as any).status === "suspended") {
+        req.logout(() => {});
+        return res.status(403).json({ message: "Account suspended" });
+      }
+    }
+    next();
   }
 
   function requireAdmin(req: Request, res: Response, next: any) {
@@ -258,7 +305,6 @@ export async function registerRoutes(
         return res.status(400).json({ message: "All fields required" });
       }
 
-      // Validate email: cap length first to prevent ReDoS, then check structural validity
       if (typeof email !== "string" || email.length > 254) {
         return res.status(400).json({ message: "Invalid email format" });
       }
@@ -268,7 +314,6 @@ export async function registerRoutes(
       }
       const localPart = email.slice(0, atIndex);
       const domain = email.slice(atIndex + 1);
-      // Local part and domain must not start/end with dots or have consecutive dots
       if (
         !domain.includes(".") ||
         domain.startsWith(".") || domain.endsWith(".") ||
@@ -279,13 +324,11 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid email format" });
       }
 
-      // Validate username (alphanumeric + underscore, 3-32 chars)
       const usernameRegex = /^[a-zA-Z0-9_]{3,32}$/;
       if (!usernameRegex.test(username)) {
         return res.status(400).json({ message: "Username must be 3-32 characters (letters, numbers, underscores only)" });
       }
 
-      // Enforce password strength
       if (password.length < 8) {
         return res.status(400).json({ message: "Password must be at least 8 characters" });
       }
@@ -315,7 +358,6 @@ export async function registerRoutes(
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return res.status(500).json({ message: "Authentication error" });
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
-      // Regenerate session to prevent session fixation
       req.session.regenerate((regenerateErr) => {
         if (regenerateErr) return res.status(500).json({ message: "Session error" });
         req.login(user, (loginErr) => {
@@ -335,8 +377,56 @@ export async function registerRoutes(
     const user = req.user as any;
     const freshUser = await storage.getUser(user.id);
     if (!freshUser) return res.status(404).json({ message: "User not found" });
-    const { password: _, ...safeUser } = freshUser;
-    res.json(safeUser);
+    const { password: _, apiKey: _k, apiKeyHash: _h, ...safeUser } = freshUser as any;
+    res.json({ ...safeUser, apiKeyPrefix: (freshUser as any).apiKeyPrefix || null });
+  });
+
+  // ========== PASSWORD RESET ==========
+
+  app.post("/api/auth/forgot-password", rateLimit({ windowMs: 15 * 60 * 1000, max: 5, validate: { ip: false } }), async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ message: "Email is required" });
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.json({ message: "If that email is registered, a reset link has been generated." });
+      }
+
+      const token = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+      await storage.createPasswordResetToken(user.id, tokenHash, expiresAt);
+
+      sendPasswordResetEmail(email, token).catch(e => console.error("Failed to send reset email:", e));
+      console.log(`[PASSWORD RESET] Token generated for ${email}`);
+
+      res.json({ message: "If that email is registered, a reset link has been generated.", resetToken: process.env.NODE_ENV !== "production" ? token : undefined });
+    } catch (err: any) {
+      res.status(500).json({ message: "Password reset request failed" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", rateLimit({ windowMs: 15 * 60 * 1000, max: 5, validate: { ip: false } }), async (req, res) => {
+    try {
+      const { token, newPassword } = req.body;
+      if (!token || !newPassword) return res.status(400).json({ message: "Token and new password are required" });
+      if (newPassword.length < 8) return res.status(400).json({ message: "Password must be at least 8 characters" });
+
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const resetRecord = await storage.getPasswordResetToken(tokenHash);
+
+      if (!resetRecord) return res.status(400).json({ message: "Invalid or expired reset token" });
+
+      const hashed = await bcrypt.hash(newPassword, 12);
+      await storage.updateUserPassword(resetRecord.user_id, hashed);
+      await storage.markPasswordResetTokenUsed(tokenHash);
+
+      res.json({ message: "Password has been reset successfully" });
+    } catch (err: any) {
+      res.status(500).json({ message: "Password reset failed" });
+    }
   });
 
   // ========== SERVICES (Proxnum-backed) ==========
@@ -371,6 +461,16 @@ export async function registerRoutes(
       res.json(prices);
     } catch (err: any) {
       res.status(500).json({ message: safeError(err) });
+    }
+  });
+
+  // ========== PUBLIC STATS ==========
+  app.get("/api/stats", async (_req, res) => {
+    try {
+      const stats = await storage.getPublicStats();
+      res.json(stats);
+    } catch (err: any) {
+      res.json({ totalOrders: 0, totalUsers: 0, totalCountries: 0 });
     }
   });
 
@@ -442,7 +542,7 @@ export async function registerRoutes(
         serviceId: service.id,
         serviceName: service.name,
         phoneNumber: formattedPhone,
-        status: "pending",
+        status: "waiting",
         otpCode: null,
         smsMessages: null,
         price: service.price,
@@ -504,7 +604,7 @@ export async function registerRoutes(
       if (!order) return res.status(404).json({ message: "Order not found" });
       if (order.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (order.status !== "pending" && order.status !== "waiting") {
-        return res.status(400).json({ message: "Order not in pending state" });
+        return res.status(400).json({ message: "Order not in waiting state" });
       }
 
       if (!order.proxnumId) {
@@ -514,7 +614,7 @@ export async function registerRoutes(
       const pnResult = await proxnumApi.getVirtualStatus(order.proxnumId);
 
       if (!pnResult.success) {
-        return res.json({ status: "pending", messages: [], otpCode: null });
+        return res.json({ status: "waiting", messages: [], otpCode: null });
       }
 
       const apiStatus = pnResult.status || "";
@@ -558,7 +658,7 @@ export async function registerRoutes(
         return res.json({ status: apiStatus, messages: [], otpCode: null });
       }
 
-      res.json({ status: "pending", messages: [], otpCode: null });
+      res.json({ status: "waiting", messages: [], otpCode: null });
     } catch (err: any) {
       console.error("Check SMS error:", err);
       res.status(500).json({ message: safeError(err) });
@@ -587,20 +687,11 @@ export async function registerRoutes(
         }
       }
 
-      await storage.cancelOrder(order.id);
-
       const refundAmount = parseFloat(order.price);
       if (!isNaN(refundAmount) && refundAmount > 0) {
-        await storage.atomicAddBalance(user.id, refundAmount);
-        await storage.createTransaction({
-          userId: user.id,
-          type: "refund",
-          amount: order.price,
-          description: "Order cancelled - refund",
-          orderId: order.id,
-          stripeSessionId: null,
-          createdAt: new Date().toISOString(),
-        });
+        await storage.transactionalCancelAndRefund(order.id, user.id, refundAmount);
+      } else {
+        await storage.cancelOrder(order.id);
       }
 
       res.json({ message: "Order cancelled and refunded" });
@@ -823,8 +914,22 @@ export async function registerRoutes(
         }
       }
 
-      await storage.cancelRental(rental.id);
-      res.json({ message: "Rental cancelled" });
+      const totalPrice = parseFloat(rental.price);
+      const rentalStart = new Date(rental.createdAt).getTime();
+      const rentalEnd = new Date(rental.expiresAt).getTime();
+      const now = Date.now();
+      const totalDuration = rentalEnd - rentalStart;
+      const elapsed = now - rentalStart;
+      const remainingRatio = Math.max(0, (totalDuration - elapsed) / totalDuration);
+      const refundAmount = Math.round(totalPrice * remainingRatio * 100) / 100;
+
+      if (refundAmount > 0) {
+        await storage.transactionalRentalCancelAndRefund(rental.id, user.id, refundAmount);
+        res.json({ message: `Rental cancelled. $${refundAmount.toFixed(2)} refunded (prorated).` });
+      } else {
+        await storage.cancelRental(rental.id);
+        res.json({ message: "Rental cancelled" });
+      }
     } catch (err: any) {
       res.status(500).json({ message: safeError(err) });
     }
@@ -946,14 +1051,10 @@ export async function registerRoutes(
 
       const existingDeposits = await storage.getUserCryptoDeposits(freshUser.id);
       const recordedTransferIds = new Set(
-        existingDeposits
-          .map(d => d.circleTransferId)
-          .filter(Boolean)
+        existingDeposits.map(d => d.circleTransferId).filter(Boolean)
       );
       const recordedTxHashes = new Set(
-        existingDeposits
-          .map(d => d.txHash)
-          .filter(Boolean)
+        existingDeposits.map(d => d.txHash).filter(Boolean)
       );
 
       let credited = 0;
@@ -1094,17 +1195,16 @@ export async function registerRoutes(
       const deposit = await storage.getCryptoDeposit(depositId);
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
       if (deposit.status === "completed") return res.status(400).json({ message: "Already completed" });
-      const now = new Date().toISOString();
-      await storage.updateCryptoDeposit(deposit.id, { status: "completed", completedAt: now });
-      const creditAmount = parseFloat(deposit.amount);
-      if (!isNaN(creditAmount) && creditAmount > 0) {
-        await storage.atomicAddBalance(deposit.userId, creditAmount);
-        await storage.createTransaction({
-          userId: deposit.userId, type: "deposit", amount: deposit.amount,
-          description: `Crypto deposit (${deposit.currency}) confirmed by admin`,
-          orderId: null, stripeSessionId: null, createdAt: now,
-        });
+      if (deposit.status === "rejected") return res.status(400).json({ message: "Cannot confirm rejected deposit" });
+      if (deposit.status !== "pending" && deposit.status !== "confirming") {
+        return res.status(400).json({ message: `Cannot confirm deposit with status: ${deposit.status}` });
       }
+      const creditAmount = parseFloat(deposit.amount);
+      if (isNaN(creditAmount) || creditAmount <= 0) {
+        return res.status(400).json({ message: "Invalid deposit amount" });
+      }
+      const now = new Date().toISOString();
+      await storage.transactionalConfirmDeposit(deposit.id, deposit.userId, creditAmount, deposit.currency, now);
       const admin = req.user as any;
       await storage.createAuditLog(admin.id, "confirm_deposit", "crypto_deposit", deposit.id, `$${deposit.amount} (${deposit.currency}) for user ${deposit.userId}`);
       res.json({ message: "Deposit confirmed and balance credited" });
@@ -1181,8 +1281,10 @@ export async function registerRoutes(
     let proxnumBalance = "N/A";
     try {
       const balResult = await proxnumApi.getUserBalance();
-      const balData = balResult.data || balResult;
-      if (balData.balance !== undefined) proxnumBalance = `$${balData.balance}`;
+      if (balResult.success !== false) {
+        const bal = balResult.balance ?? (balResult.data as any)?.balance;
+        if (bal !== undefined) proxnumBalance = `$${bal}`;
+      }
     } catch (e) {}
 
     res.json({
@@ -1201,11 +1303,9 @@ export async function registerRoutes(
 
   app.put("/api/admin/services/:id", requireAdmin, async (req, res) => {
     try {
-      // Whitelist allowed fields to prevent mass assignment
       const { name, price, icon, category, isActive } = req.body;
       const allowedFields: Record<string, any> = {};
 
-      // Reject inputs containing HTML/script characters rather than attempting to strip them
       const containsHtml = (v: string) => v.includes("<") || v.includes(">");
 
       if (name !== undefined) {
@@ -1317,6 +1417,21 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
+  app.post("/api/admin/users/:id/suspend", requireAdmin, async (req, res) => {
+    try {
+      const userId = parseId(req.params.id);
+      if (!userId) return res.status(400).json({ message: "Invalid user ID" });
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if ((targetUser as any).role === "admin") return res.status(400).json({ message: "Cannot suspend admin" });
+      const newStatus = (targetUser as any).status === "suspended" ? "active" : "suspended";
+      await storage.updateUserStatus(userId, newStatus);
+      const admin = req.user as any;
+      await storage.createAuditLog(admin.id, newStatus === "suspended" ? "suspend_user" : "activate_user", "user", userId, `User ${targetUser.username}`);
+      res.json({ message: `User ${newStatus === "suspended" ? "suspended" : "activated"}`, status: newStatus });
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
+  });
+
   app.post("/api/admin/crypto/:id/reject", requireAdmin, async (req, res) => {
     try {
       const depositId = parseId(req.params.id);
@@ -1344,16 +1459,82 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
+  app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
+    try {
+      const allOrders = await storage.getAllOrders();
+      const allUsers = await storage.getAllUsers();
+      const userMap = new Map(allUsers.map(u => [u.id, u]));
+      const enriched = allOrders.map(o => ({
+        ...o,
+        username: userMap.get(o.userId)?.username || "Unknown",
+        email: userMap.get(o.userId)?.email || "",
+      }));
+      res.json(enriched.slice(0, 200));
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
+  });
+
+  app.get("/api/admin/audit-logs", requireAdmin, async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const offset = Number(req.query.offset) || 0;
+      const logs = await storage.getAuditLogs(limit, offset);
+      res.json(logs);
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
+  });
+
+  app.get("/api/admin/export/users", requireAdmin, async (_req, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const csv = ["id,username,email,balance,role,status"];
+      for (const u of allUsers) {
+        csv.push(`${u.id},"${u.username}","${u.email}","${u.balance}","${u.role}","${(u as any).status || "active"}"`);
+      }
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=users.csv");
+      res.send(csv.join("\n"));
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
+  });
+
+  app.get("/api/admin/export/orders", requireAdmin, async (_req, res) => {
+    try {
+      const allOrders = await storage.getAllOrders();
+      const csv = ["id,userId,serviceName,phoneNumber,status,price,country,createdAt"];
+      for (const o of allOrders) {
+        csv.push(`${o.id},${o.userId},"${o.serviceName}","${o.phoneNumber}","${o.status}","${o.price}","${o.country}","${o.createdAt}"`);
+      }
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=orders.csv");
+      res.send(csv.join("\n"));
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
+  });
+
+  app.get("/api/admin/export/transactions", requireAdmin, async (_req, res) => {
+    try {
+      const allTxns = await storage.getAllTransactions();
+      const csv = ["id,userId,type,amount,description,createdAt"];
+      for (const t of allTxns) {
+        csv.push(`${t.id},${t.userId},"${t.type}","${t.amount}","${(t.description || "").replace(/"/g, '""')}","${t.createdAt}"`);
+      }
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=transactions.csv");
+      res.send(csv.join("\n"));
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
+  });
+
   // ========== API v1 (API key auth) ==========
 
   async function requireApiKey(req: Request, res: Response, next: any) {
-    // Only accept API key from header; query string keys leak into logs/referrers
     const key = req.headers["x-api-key"] as string;
     if (!key) return res.status(401).json({ error: "API key required (use x-api-key header)" });
-    const user = await storage.getUserByApiKey(key);
-    if (!user) return res.status(401).json({ error: "Invalid API key" });
-    (req as any).apiUser = user;
-    next();
+    try {
+      const user = await storage.getUserByApiKey(key);
+      if (!user) return res.status(401).json({ error: "Invalid API key" });
+      if ((user as any).status === "suspended") return res.status(403).json({ error: "Account suspended" });
+      (req as any).apiUser = user;
+      next();
+    } catch (err) {
+      return res.status(500).json({ error: "Authentication failed" });
+    }
   }
 
   app.get("/api/v1/services", async (_req, res) => {
@@ -1415,7 +1596,7 @@ export async function registerRoutes(
 
       const order = await storage.createOrder({
         userId: user.id, serviceId: svc.id, serviceName: svc.name,
-        phoneNumber: formattedPhone, status: "pending", otpCode: null,
+        phoneNumber: formattedPhone, status: "waiting", otpCode: null,
         smsMessages: null,
         price: svc.price, country: resolvedCountry, proxnumId,
         createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
@@ -1428,7 +1609,7 @@ export async function registerRoutes(
         stripeSessionId: null, createdAt: now.toISOString(),
       });
 
-      res.json({ orderId: order.id, phoneNumber: formattedPhone, status: "pending", expiresAt: order.expiresAt });
+      res.json({ orderId: order.id, phoneNumber: formattedPhone, status: "waiting", expiresAt: order.expiresAt });
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
@@ -1505,10 +1686,11 @@ export async function registerRoutes(
         }
       }
 
-      await storage.cancelOrder(order.id);
       const refundAmount = parseFloat(order.price);
       if (!isNaN(refundAmount) && refundAmount > 0) {
-        await storage.atomicAddBalance(user.id, refundAmount);
+        await storage.transactionalCancelAndRefund(order.id, user.id, refundAmount);
+      } else {
+        await storage.cancelOrder(order.id);
       }
       res.json({ message: "Order cancelled and refunded" });
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
@@ -1615,8 +1797,13 @@ export async function registerRoutes(
 
   // Profile
   app.post("/api/profile/generate-api-key", requireAuth, async (req, res) => {
-    const user = req.user as any;
-    res.json({ apiKey: await storage.generateApiKey(user.id) });
+    try {
+      const user = req.user as any;
+      const result = await storage.generateApiKey(user.id);
+      res.json({ apiKey: result.apiKey, prefix: result.prefix, message: "Save this key now. It will not be shown again." });
+    } catch (err: any) {
+      res.status(500).json({ message: "Failed to generate API key" });
+    }
   });
 
   app.post("/api/profile/change-password", requireAuth, async (req, res) => {
@@ -1639,11 +1826,53 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ message: "Password update failed" }); }
   });
 
+  app.put("/api/profile", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const { username, email } = req.body;
+      const updates: any = {};
+
+      if (username && username !== user.username) {
+        const usernameRegex = /^[a-zA-Z0-9_]{3,32}$/;
+        if (!usernameRegex.test(username)) {
+          return res.status(400).json({ message: "Username must be 3-32 characters (letters, numbers, underscores)" });
+        }
+        const existing = await storage.getUserByUsername(username);
+        if (existing && existing.id !== user.id) return res.status(400).json({ message: "Username already taken" });
+        updates.username = username;
+      }
+
+      if (email && email !== user.email) {
+        if (typeof email !== "string" || email.length > 254 || !email.includes("@")) {
+          return res.status(400).json({ message: "Invalid email format" });
+        }
+        const existing = await storage.getUserByEmail(email);
+        if (existing && existing.id !== user.id) return res.status(400).json({ message: "Email already registered" });
+        updates.email = email;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No changes to update" });
+      }
+
+      await storage.updateUserProfile(user.id, updates);
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(404).json({ message: "User not found" });
+      const { password: _, ...safeUser } = freshUser;
+      res.json(safeUser);
+    } catch (err: any) { res.status(500).json({ message: "Profile update failed" }); }
+  });
+
   // Proxnum balance endpoint
   app.get("/api/proxnum/balance", requireAdmin, async (_req, res) => {
     try {
       const result = await proxnumApi.getUserBalance();
-      res.json(result.data || result);
+      if (result.success !== false) {
+        const bal = result.balance ?? (result.data as any)?.balance;
+        res.json({ balance: bal ?? "N/A" });
+      } else {
+        res.json({ balance: "N/A" });
+      }
     } catch (err: any) {
       res.status(500).json({ message: safeError(err) });
     }
@@ -1655,6 +1884,8 @@ export async function registerRoutes(
     console.error("Proxnum initial sync failed:", err);
   });
 
+  startExpiredOrderCleanup();
+
   if (circle.isCircleConfigured()) {
     const CIRCLE_POLL_INTERVAL_MS = 2 * 60 * 1000;
     const pollCircleDeposits = async () => {
@@ -1662,62 +1893,66 @@ export async function registerRoutes(
         const allUsers = await storage.getAllUsers();
         const usersWithWallets = allUsers.filter(u => u.circleWalletId);
 
-        for (const user of usersWithWallets) {
-          try {
-            const txList = await circle.listWalletTransactions(user.circleWalletId!);
-            const inboundConfirmed = txList.filter(tx =>
-              tx.type === "INBOUND" && tx.state === "CONFIRMED"
-            );
+        const batchSize = 5;
+        for (let i = 0; i < usersWithWallets.length; i += batchSize) {
+          const batch = usersWithWallets.slice(i, i + batchSize);
+          await Promise.allSettled(batch.map(async (user) => {
+            try {
+              const txList = await circle.listWalletTransactions(user.circleWalletId!);
+              const inboundConfirmed = txList.filter(tx =>
+                tx.type === "INBOUND" && tx.state === "CONFIRMED"
+              );
 
-            const tokenCache = new Map<string, { name: string; symbol: string } | null>();
-            for (const tx of inboundConfirmed) {
-              if (!tx.tokenId) continue;
-              if (!tokenCache.has(tx.tokenId)) {
-                tokenCache.set(tx.tokenId, await circle.getTokenInfo(tx.tokenId));
+              const tokenCache = new Map<string, { name: string; symbol: string } | null>();
+              for (const tx of inboundConfirmed) {
+                if (!tx.tokenId) continue;
+                if (!tokenCache.has(tx.tokenId)) {
+                  tokenCache.set(tx.tokenId, await circle.getTokenInfo(tx.tokenId));
+                }
+                const tokenInfo = tokenCache.get(tx.tokenId);
+                const isUsdc = tokenInfo && (
+                  tokenInfo.symbol === "USDC" ||
+                  tokenInfo.name.includes("USDC") ||
+                  tokenInfo.name.includes("USD Coin")
+                );
+                if (!isUsdc) continue;
+
+                const rawAmount = Array.isArray(tx.amounts) && tx.amounts.length > 0 ? String(tx.amounts[0]) : "0";
+                const usdAmount = parseFloat(rawAmount);
+                if (isNaN(usdAmount) || usdAmount <= 0) continue;
+
+                const now = new Date().toISOString();
+                await storage.creditCircleDeposit(
+                  {
+                    userId: user.id,
+                    currency: "USDC",
+                    amount: usdAmount.toFixed(2),
+                    cryptoAmount: rawAmount,
+                    walletAddress: user.circleWalletAddress || "",
+                    txHash: tx.txHash || null,
+                    circleTransferId: tx.id,
+                    status: "completed",
+                    createdAt: tx.createDate || now,
+                    expiresAt: now,
+                    completedAt: now,
+                  },
+                  {
+                    userId: user.id,
+                    type: "deposit",
+                    amount: usdAmount.toFixed(2),
+                    description: `USDC deposit via Circle wallet (auto-detected)`,
+                    orderId: null,
+                    stripeSessionId: null,
+                    createdAt: now,
+                  },
+                  user.id,
+                  usdAmount.toFixed(2)
+                );
               }
-              const tokenInfo = tokenCache.get(tx.tokenId);
-              const isUsdc = tokenInfo && (
-                tokenInfo.symbol === "USDC" ||
-                tokenInfo.name.includes("USDC") ||
-                tokenInfo.name.includes("USD Coin")
-              );
-              if (!isUsdc) continue;
-
-              const rawAmount = Array.isArray(tx.amounts) && tx.amounts.length > 0 ? String(tx.amounts[0]) : "0";
-              const usdAmount = parseFloat(rawAmount);
-              if (isNaN(usdAmount) || usdAmount <= 0) continue;
-
-              const now = new Date().toISOString();
-              await storage.creditCircleDeposit(
-                {
-                  userId: user.id,
-                  currency: "USDC",
-                  amount: usdAmount.toFixed(2),
-                  cryptoAmount: rawAmount,
-                  walletAddress: user.circleWalletAddress || "",
-                  txHash: tx.txHash || null,
-                  circleTransferId: tx.id,
-                  status: "completed",
-                  createdAt: tx.createDate || now,
-                  expiresAt: now,
-                  completedAt: now,
-                },
-                {
-                  userId: user.id,
-                  type: "deposit",
-                  amount: usdAmount.toFixed(2),
-                  description: `USDC deposit via Circle wallet (auto-detected)`,
-                  orderId: null,
-                  stripeSessionId: null,
-                  createdAt: now,
-                },
-                user.id,
-                usdAmount.toFixed(2)
-              );
+            } catch (userErr) {
+              console.error(`Circle poll error for user ${user.id}:`, userErr);
             }
-          } catch (userErr) {
-            console.error(`Circle poll error for user ${user.id}:`, userErr);
-          }
+          }));
         }
       } catch (pollErr) {
         console.error("Circle background poll error:", pollErr);

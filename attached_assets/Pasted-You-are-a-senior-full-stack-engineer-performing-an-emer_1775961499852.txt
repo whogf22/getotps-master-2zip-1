@@ -1,0 +1,125 @@
+You are a senior full-stack engineer performing an emergency production audit fix. This codebase is a Node.js/Express + React/Vite virtual phone number / OTP SaaS platform using Drizzle ORM (PostgreSQL), express-session, Proxnum API, and Circle (USDC payments).
+
+There are exactly 31 bugs found across 2 audit rounds. You MUST fix ALL 31 in one continuous session. Work in order: CRITICAL → HIGH → MEDIUM → LOW. Do NOT stop, do NOT ask questions, do NOT skip any issue, do NOT leave TODO/FIXME comments. Write real production code for every fix. After each severity tier, run the app to verify it compiles. Commit after each tier.
+
+---
+
+## ⛔ CRITICAL (6) — Money, security, uptime. Fix these FIRST.
+
+**CRIT-1: trust proxy not set — rate limiting broken for all users behind proxy.**
+Add `app.set('trust proxy', 1)` BEFORE all middleware in the main Express setup file. Without this, `req.ip` returns the proxy's IP and rate limiting treats every user as one person.
+
+**CRIT-2: Session uses default MemoryStore — memory leak, will crash in production.**
+Install `connect-pg-simple`. Replace the default MemoryStore with a PostgreSQL-backed session store:
+```ts
+import pgSession from 'connect-pg-simple';
+const PgStore = pgSession(session);
+app.use(session({
+  store: new PgStore({ conString: process.env.DATABASE_URL, tableName: 'user_sessions', createTableIfMissing: true }),
+  secret: process.env.SESSION_SECRET,
+  resave: false, saveUninitialized: false,
+  cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, maxAge: 86400000, sameSite: 'lax' }
+}));
+```
+Generate a random 64-char SESSION_SECRET if missing.
+
+**CRIT-3: No expired order cleanup — user funds stuck forever in "pending" orders.**
+Create a cleanup function that runs every 5 minutes + once on startup. It must: find all orders with status `pending` older than 15 minutes, then inside a `db.transaction()`: refund `order.cost` to `users.balance` and set order status to `expired`. Add `expired` to the status type if missing. Log every refund.
+
+**CRIT-4: No foreign key constraints — orphaned records possible.**
+Add `.references(() => table.id, { onDelete: 'cascade' })` to EVERY relational column across ALL Drizzle schema tables (orders, transactions, rentals, api_keys, audit_logs, etc.). Use `onDelete: 'cascade'` for child records, `onDelete: 'set null'` where appropriate. Run `npx drizzle-kit generate` then `npx drizzle-kit migrate`.
+
+**CRIT-5: Cancel/refund not transactional — server crash = user loses money.**
+Find ALL cancel/refund endpoints. Wrap every one in `db.transaction()` with row-level locking (`.for('update')`). The balance update AND status change MUST happen in a single transaction. This applies to order cancellations, rental cancellations, and any other money-moving operations.
+
+**CRIT-6: API response logging leaks sensitive data (API keys exposed in logs).**
+Create a `sanitizeForLogging()` utility that recursively redacts keys matching: apiKey, api_key, token, password, secret, authorization, cookie, sessionId, balance. Run `grep -rn "console.log" server/` and apply sanitization to every log statement that outputs request/response data.
+
+---
+
+## 🔴 HIGH (7) — Security holes, broken features.
+
+**HIGH-1: No CSRF protection on state-changing endpoints.**
+Install `csrf-csrf`. Set up double-submit cookie pattern. Add `GET /api/csrf-token` endpoint. Protect all POST/PUT/PATCH/DELETE routes. On the frontend, fetch the CSRF token on app load and attach it as `x-csrf-token` header on every mutating request.
+
+**HIGH-2: API keys stored plain text in database.**
+Hash API keys with SHA-256 before storing. Add `keyHash` and `keyPrefix` columns. Show the full key ONLY once at creation time. On auth, hash the incoming key and compare against `keyHash`. Migrate existing plain-text keys: hash them, store hash, drop the plain-text column. Update `/api/auth/me` to return only the prefix.
+
+**HIGH-3: Rental feature half-built — backend done, no frontend UI.**
+Build a complete Rentals page: list available rental plans, "Rent Number" button calling the rental API, Active Rentals dashboard with number/expiry countdown/messages/extend/cancel buttons, rental history tab. Add "Rentals" nav link. Connect to all existing backend rental endpoints.
+
+**HIGH-4: No password reset / forgot password flow.**
+Backend: `POST /api/auth/forgot-password` (generate time-limited token, store hashed, 1hr expiry) and `POST /api/auth/reset-password` (validate token, update password, delete token). Create `password_reset_tokens` table. Frontend: "Forgot Password?" link on login, email input form, reset page with new password + confirm. Enforce 8-char minimum.
+
+**HIGH-5: Countries hardcoded on Buy page (only USA, others disabled).**
+Create `GET /api/services/countries` that fetches available countries from Proxnum API, caches for 1 hour. Frontend: fetch dynamically, render ALL available countries, remove the hardcoded USA-only list. Show loading skeleton while fetching.
+
+**HIGH-6: No Proxnum request timeouts or retries.**
+Create a `proxnumRequest()` wrapper with 10s timeout and 3 retries with exponential backoff. Only retry on 5xx/timeout errors, not 4xx. Replace ALL direct Proxnum API calls with this wrapper throughout the codebase.
+
+**HIGH-7: Password length mismatch — frontend says 6, backend requires 8.**
+Set BOTH to minimum 8 characters. Run `grep -rn "minLength\|min.*length\|password.*6\|password.*valid" client/ server/` and fix every instance. All validation messages must say "at least 8 characters".
+
+---
+
+## 🟡 MEDIUM (10) — Bugs, missing features, tech debt.
+
+**MED-1: ws package installed but never used.** Run `npm uninstall ws @types/ws`. Remove any related imports.
+
+**MED-2: audit_logs table missing from Drizzle schema.** Add `auditLogs` table (id, userId FK, action, entity, entityId, metadata jsonb, ipAddress, createdAt). Migrate. Create `logAudit()` utility. Call it on: login, register, purchase, cancel, refund, API key generation, all admin actions.
+
+**MED-3: Circle polling doesn't scale (sequential over all users).** Replace sequential polling with: one query for all users with pending deposits, then `Promise.allSettled()` with concurrency limit of 5 for Circle API checks.
+
+**MED-4: API docs missing 3 working endpoints.** Run `grep -rn "router\.get\|router\.post\|router\.put\|router\.delete\|app\.get\|app\.post" server/`. Compare against API docs page. Add documentation for every missing endpoint.
+
+**MED-5: Admin panel missing views.** Build: (1) All Orders view — paginated, filterable by status/date/user, (2) All Rentals view — same, (3) Audit Log viewer — paginated, filterable by action/user/date, (4) Ban/Suspend — add `status` (active/suspended/banned) to users table, admin toggle, middleware to block suspended users with 403, (5) CSV Export for orders/users/transactions, (6) Admin user password reset, (7) Service management — view/edit Proxnum services, toggle availability, set markup pricing.
+
+**MED-6: Proxnum Balance KPI always shows "—".** Debug the admin KPI: use the `proxnumRequest()` wrapper, log raw response, fix parsing. Show "Failed to load" on error instead of "—".
+
+**MED-7: Stripe leftover code/dependencies.** Run `npm uninstall stripe @stripe/stripe-js @stripe/react-stripe-js`. Run `grep -rn "stripe\|STRIPE" .` and delete every Stripe file, route, webhook handler, component, and env var reference.
+
+**MED-8: No email/notification system.** Create an `EmailService` interface with `send(to, subject, html)`. Implement `DevEmailService` (logs to console) and `ResendEmailService` (uses Resend API via RESEND_API_KEY env var). Auto-select based on env var presence. Send emails on: registration, password reset, large transactions, order completion.
+
+**MED-9: Rental cancellation gives no refund.** Calculate prorated refund: `refundAmount = cost * (1 - elapsed/total)`. Inside `db.transaction()`: update rental status to cancelled, add refund to user balance. Return refund amount in API response. Show it in frontend confirmation.
+
+**MED-10: Landing page stats hardcoded.** Create `GET /api/stats/public` returning real counts (total completed orders, total users, distinct countries). Cache 10 minutes. Frontend: fetch and animate numbers counting up.
+
+---
+
+## 🟢 LOW (8) — Polish, UX, edge cases.
+
+**LOW-1: No data export for admins.** Ensure `GET /api/admin/export/:table?format=csv` works for users, orders, transactions, rentals, audit_logs with proper CSV generation and admin auth.
+
+**LOW-2: Price cache inefficiency (overwrites on each request).** Implement a Map-based cache with 5-minute TTL. Only re-fetch when expired. Replace all price-fetching logic to use this cache.
+
+**LOW-3: pending vs waiting status mismatch in UI.** Run `grep -rn "waiting" client/`. Replace all "waiting" with "pending" to match backend. Ensure status badge colors are consistent.
+
+**LOW-4: Username/email can't be edited on Profile.** Backend: `PATCH /api/auth/profile` accepting `{ username?, email? }` with uniqueness validation. Frontend: make fields editable, add "Save Changes" button. Require current password for email changes.
+
+**LOW-5: No confirmation dialog before regenerating API key.** Add a modal: "This will invalidate your current API key. Integrations using it will stop working immediately." with Cancel/Regenerate buttons. Only call API after confirmation.
+
+**LOW-6: generate-api-key endpoint has no try/catch.** Wrap in try/catch. Then audit ALL route handlers: `grep -rn "router\.post\|router\.put\|router\.patch\|router\.delete" server/` — ensure every one has error handling or uses an async wrapper middleware.
+
+**LOW-7: Full API key returned on every /api/auth/me call.** After HIGH-2, double-check `/api/auth/me` only returns `keyPrefix` (e.g., "gotp_a1b2c3..."), never the full key or hash.
+
+**LOW-8: Admin login may fail if password changed (no recovery path).** Add a CLI script `npm run reset-admin-password` that prompts for a new password and updates the admin user directly in DB. Document it in README.
+
+---
+
+## ✅ FINAL VERIFICATION — Run after ALL 31 fixes are done:
+
+1. App starts without errors
+2. Register → login → profile all work
+3. Buy a number → full flow works
+4. Cancel an order → refund appears in balance (check it's transactional)
+5. Rate limiting works (rapid requests get blocked)
+6. Admin panel: all new views render with data
+7. API key: generate → see prefix only → regenerate with confirmation dialog
+8. Rentals page: list plans → rent → view active → cancel with prorated refund
+9. `npx drizzle-kit generate` produces clean migration (no drift)
+10. `grep -rn "TODO\|FIXME\|HACK" server/ client/` returns zero results
+11. `grep -rn "console.log" server/` — no sensitive data leaked
+12. `grep -rn "stripe\|STRIPE" .` returns zero results
+13. Forgot password flow works end-to-end
+
+Start now with CRIT-1. Do not stop until all 31 issues are fixed and all 13 verification checks pass.

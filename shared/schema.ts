@@ -9,12 +9,15 @@ export const users = sqliteTable("users", {
   password: text("password").notNull(),
   balance: text("balance").notNull().default("0.00"),
   apiKey: text("api_key").unique(),
+  apiKeyHash: text("api_key_hash"),
+  apiKeyPrefix: text("api_key_prefix"),
   role: text("role").notNull().default("user"),
+  status: text("status").notNull().default("active"),
   circleWalletId: text("circle_wallet_id"),
   circleWalletAddress: text("circle_wallet_address"),
 });
 
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, balance: true, apiKey: true, role: true, circleWalletId: true, circleWalletAddress: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, balance: true, apiKey: true, apiKeyHash: true, apiKeyPrefix: true, role: true, status: true, circleWalletId: true, circleWalletAddress: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
@@ -126,3 +129,25 @@ export const cryptoDeposits = sqliteTable("crypto_deposits", {
 export const insertCryptoDepositSchema = createInsertSchema(cryptoDeposits).omit({ id: true });
 export type InsertCryptoDeposit = z.infer<typeof insertCryptoDepositSchema>;
 export type CryptoDeposit = typeof cryptoDeposits.$inferSelect;
+
+export const auditLogs = sqliteTable("audit_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id"),
+  action: text("action").notNull(),
+  entity: text("entity"),
+  entityId: integer("entity_id"),
+  metadata: text("metadata"),
+  ipAddress: text("ip_address"),
+  createdAt: text("created_at").notNull(),
+});
+
+export type AuditLog = typeof auditLogs.$inferSelect;
+
+export const passwordResetTokens = sqliteTable("password_reset_tokens", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  used: integer("used").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+});

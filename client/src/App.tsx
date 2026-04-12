@@ -17,6 +17,8 @@ import History from "@/pages/History";
 import AddFunds from "@/pages/AddFunds";
 import ApiDocs from "@/pages/ApiDocs";
 import Profile from "@/pages/Profile";
+import Rentals from "@/pages/Rentals";
+import ForgotPassword from "@/pages/ForgotPassword";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminUsers from "@/pages/AdminUsers";
 import AdminDeposits from "@/pages/AdminDeposits";
@@ -78,6 +80,7 @@ function AppRouter() {
       <Route path="/" component={Landing} />
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/buy" component={() => <ProtectedRoute component={BuyNumber} />} />
       <Route path="/active" component={() => <ProtectedRoute component={ActiveNumbers} />} />
@@ -85,6 +88,7 @@ function AppRouter() {
       <Route path="/funds" component={() => <ProtectedRoute component={AddFunds} />} />
       <Route path="/api-docs" component={() => <ProtectedRoute component={ApiDocs} />} />
       <Route path="/profile" component={() => <ProtectedRoute component={Profile} />} />
+      <Route path="/rentals" component={() => <ProtectedRoute component={Rentals} />} />
       <Route path="/admin" component={() => <AdminRoute component={AdminDashboard} />} />
       <Route path="/admin/users" component={() => <AdminRoute component={AdminUsers} />} />
       <Route path="/admin/deposits" component={() => <AdminRoute component={AdminDeposits} />} />

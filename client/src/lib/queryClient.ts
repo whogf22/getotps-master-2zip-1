@@ -2,6 +2,28 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
+function getCsrfToken(): string | null {
+  const match = document.cookie.split(";").map(c => c.trim()).find(c => c.startsWith("csrf-token="));
+  return match ? match.split("=")[1] : null;
+}
+
+let csrfInitialized = false;
+
+async function ensureCsrfToken(): Promise<string | null> {
+  let token = getCsrfToken();
+  if (token) return token;
+  if (csrfInitialized) return null;
+  csrfInitialized = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/csrf-token`, { credentials: "same-origin" });
+    if (res.ok) {
+      const data = await res.json();
+      return data.csrfToken || getCsrfToken();
+    }
+  } catch {}
+  return null;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -14,10 +36,19 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (data) headers["Content-Type"] = "application/json";
+
+  if (method !== "GET" && method !== "HEAD") {
+    const csrfToken = await ensureCsrfToken();
+    if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  }
+
   const res = await fetch(`${API_BASE}${url}`, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
+    credentials: "same-origin",
   });
 
   await throwIfResNotOk(res);
@@ -30,7 +61,9 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(`${API_BASE}${queryKey.join("/")}`);
+    const res = await fetch(`${API_BASE}${queryKey.join("/")}`, {
+      credentials: "same-origin",
+    });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

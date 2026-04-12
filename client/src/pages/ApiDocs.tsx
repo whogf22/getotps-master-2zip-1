@@ -55,11 +55,18 @@ const ENDPOINTS = [
     response: `{ "balance": "24.50" }`,
   },
   {
+    method: "GET",
+    path: "/api/v1/price",
+    desc: "Get the resell price for a specific service and country",
+    auth: true,
+    response: `{ "success": true, "price": 0.45 }`,
+  },
+  {
     method: "POST",
     path: "/api/v1/order",
     desc: "Create a new order — buy a phone number for a service",
     auth: true,
-    body: `{ "service": "whatsapp" }`,
+    body: `{ "service": "whatsapp", "country": "us" }`,
     response: `{ "orderId": 42, "phoneNumber": "+12125551234", "status": "waiting", "expiresAt": "..." }`,
   },
   {
@@ -75,6 +82,21 @@ const ENDPOINTS = [
     desc: "Cancel an active order and receive a refund",
     auth: true,
     response: `{ "message": "Order cancelled and refunded" }`,
+  },
+  {
+    method: "POST",
+    path: "/api/v1/order/:id/resend",
+    desc: "Request a new number for a pending/waiting order",
+    auth: true,
+    response: `{ "message": "Resend requested successfully" }`,
+  },
+  {
+    method: "POST",
+    path: "/api/v1/rental",
+    desc: "Rent a long-term phone number (default 7 days)",
+    auth: true,
+    body: `{ "service": "whatsapp", "country": "us", "days": 7 }`,
+    response: `{ "rentalId": 5, "phoneNumber": "+12125559876", "status": "active", "expiresAt": "..." }`,
   },
 ];
 
@@ -136,7 +158,7 @@ export default function ApiDocs() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("curl");
 
-  const apiKey = user?.apiKey || "YOUR_API_KEY";
+  const apiKey = (user as any)?.apiKeyPrefix ? `${(user as any).apiKeyPrefix}...` : "YOUR_API_KEY";
 
   const curlExample = `# List services
 curl https://getotps.com/api/v1/services
