@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { Phone, Clock, MessageSquare, X, Copy, Check, ChevronDown, ChevronUp } from "lucide-react";
+import { Phone, Clock, MessageSquare, X, Copy, Check, ChevronDown, ChevronUp, Plus } from "lucide-react";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -57,6 +57,8 @@ export default function Rentals() {
     refetchInterval: expandedRental ? 15000 : false,
   });
 
+  const [extendDays, setExtendDays] = useState<Record<number, number>>({});
+
   const cancelMutation = useMutation({
     mutationFn: async (rentalId: number) => {
       const res = await apiRequest("POST", `/api/rentals/${rentalId}/cancel`);
@@ -67,6 +69,22 @@ export default function Rentals() {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       refreshUser();
       toast({ title: "Rental cancelled", description: data.message });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const extendMutation = useMutation({
+    mutationFn: async ({ rentalId, days }: { rentalId: number; days: number }) => {
+      const res = await apiRequest("POST", `/api/rentals/${rentalId}/extend`, { days });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rentals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      refreshUser();
+      toast({ title: "Rental extended", description: data.message });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -145,7 +163,7 @@ export default function Rentals() {
                         <span>{rental.days} day rental · ${rental.price}</span>
                       </div>
 
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 flex-wrap">
                         <Button
                           size="sm"
                           variant="outline"
@@ -156,6 +174,27 @@ export default function Rentals() {
                           Messages
                           {expandedRental === rental.id ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />}
                         </Button>
+                        <div className="flex items-center gap-1">
+                          <select
+                            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                            value={extendDays[rental.id] || 7}
+                            onChange={(e) => setExtendDays(prev => ({ ...prev, [rental.id]: parseInt(e.target.value) }))}
+                          >
+                            {[1, 3, 7, 14, 30].map(d => (
+                              <option key={d} value={d}>{d} day{d > 1 ? "s" : ""}</option>
+                            ))}
+                          </select>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => extendMutation.mutate({ rentalId: rental.id, days: extendDays[rental.id] || 7 })}
+                            disabled={extendMutation.isPending}
+                            className="text-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5 mr-1" />
+                            Extend
+                          </Button>
+                        </div>
                         <Button
                           size="sm"
                           variant="destructive"

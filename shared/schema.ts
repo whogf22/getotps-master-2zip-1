@@ -26,6 +26,7 @@ export const services = sqliteTable("services", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   price: text("price").notNull(),
+  costPrice: text("cost_price"),
   icon: text("icon"),
   category: text("category"),
   isActive: integer("is_active").notNull().default(1),

@@ -120,7 +120,7 @@ export default function AdminSettings() {
               <div>
                 <label className="text-sm font-medium mb-2 block">Default Price Multiplier</label>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Global multiplier applied to Proxnum base prices. A value of 1.5 means 50% markup over cost.
+                  Fine-tuning multiplier applied on top of tiered markup. Default 1.0 = standard pricing. Increase to raise all prices proportionally.
                 </p>
                 <Input
                   type="number"

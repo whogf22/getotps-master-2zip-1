@@ -33,9 +33,23 @@ const SERVICE_CATEGORIES: Record<string, string> = {
   Bumble: "Dating", Tinder: "Dating", Hinge: "Dating", Badoo: "Dating",
 };
 
+const PRICE_FLOOR = 0.05;
+
+function applyTieredMarkup(costPrice: number): number {
+  let marked: number;
+  if (costPrice <= 0.05) {
+    marked = costPrice * 3.0;
+  } else if (costPrice <= 0.50) {
+    marked = costPrice * 2.0;
+  } else {
+    marked = costPrice * 1.5;
+  }
+  return Math.max(marked, PRICE_FLOOR);
+}
+
 async function getMarkupMultiplier(): Promise<number> {
   const val = await storage.getSetting("price_multiplier");
-  return val ? parseFloat(val) : 1.5;
+  return val ? parseFloat(val) : 1.0;
 }
 
 async function getServiceMultiplier(service: string, country: string): Promise<number> {
@@ -49,7 +63,8 @@ async function getServiceMultiplier(service: string, country: string): Promise<n
 async function calculatePrice(basePrice: number, service: string, country: string): Promise<number> {
   const globalMult = await getMarkupMultiplier();
   const serviceMult = await getServiceMultiplier(service, country);
-  return basePrice * globalMult * serviceMult;
+  const price = basePrice * globalMult * serviceMult;
+  return Math.max(price, PRICE_FLOOR);
 }
 
 function safeError(err: any, fallback = "An unexpected error occurred"): string {
@@ -85,15 +100,15 @@ async function syncProxnumServices(): Promise<void> {
       console.error("Failed to fetch prices:", e);
     }
 
-    const servicePriceMap = new Map<string, { basePrice: number; available: number }>();
+    const servicePriceMap = new Map<string, { costPrice: number; available: number }>();
     for (const [_countryCode, countryPrices] of Object.entries(allPrices)) {
       if (typeof countryPrices !== "object" || Array.isArray(countryPrices)) continue;
       for (const [svcCode, info] of Object.entries(countryPrices as Record<string, any>)) {
         const existing = servicePriceMap.get(svcCode);
-        const price = info.sell_price || info.base_price || 0;
+        const cost = info.base_price || 0;
         const avail = info.available || 0;
-        if (!existing || price < existing.basePrice) {
-          servicePriceMap.set(svcCode, { basePrice: price, available: (existing?.available || 0) + avail });
+        if (!existing || cost < existing.costPrice) {
+          servicePriceMap.set(svcCode, { costPrice: cost, available: (existing?.available || 0) + avail });
         } else {
           servicePriceMap.set(svcCode, { ...existing, available: existing.available + avail });
         }
@@ -109,15 +124,17 @@ async function syncProxnumServices(): Promise<void> {
       if (!slug) continue;
 
       const priceInfo = servicePriceMap.get(serviceCode);
-      const basePrice = priceInfo ? priceInfo.basePrice : 0.50;
+      const costPrice = priceInfo ? priceInfo.costPrice : 0.50;
       const totalAvailable = priceInfo ? priceInfo.available : 0;
-      const finalPrice = basePrice * globalMult;
+      const tieredPrice = applyTieredMarkup(costPrice);
+      const finalPrice = tieredPrice * globalMult;
 
       const displayName = name.split(",")[0].trim();
       dbServices.push({
         name: displayName,
         slug,
-        price: finalPrice.toFixed(2),
+        price: Math.max(finalPrice, PRICE_FLOOR).toFixed(2),
+        costPrice: costPrice.toFixed(4),
         icon: svc.icon || null,
         category: SERVICE_CATEGORIES[displayName] || "Other",
         isActive: totalAvailable > 0 ? 1 : 0,
@@ -824,7 +841,7 @@ export async function registerRoutes(
 
       let rentalPriceData;
       try {
-        rentalPriceData = await proxnumApi.getRentalPrices(service.slug, resolvedCountry);
+        rentalPriceData = await proxnumApi.getRentalPrices(service.slug, resolvedCountry, rentalDays);
       } catch (e) {}
 
       const baseDayPrice = rentalPriceData?.price
@@ -866,7 +883,7 @@ export async function registerRoutes(
         phoneNumber: formattedPhone,
         status: "active",
         price: finalPrice.toFixed(2),
-        country: rentalCountry,
+        country: resolvedCountry,
         days: rentalDays,
         proxnumId,
         createdAt: now.toISOString(),
@@ -990,6 +1007,65 @@ export async function registerRoutes(
         res.json({ message: "Rental cancelled" });
       }
     } catch (err: any) {
+      res.status(500).json({ message: safeError(err) });
+    }
+  });
+
+  app.post("/api/rentals/:id/extend", requireAuth, async (req, res) => {
+    try {
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ message: "Invalid rental ID" });
+      const user = req.user as any;
+      const rental = await storage.getRental(id);
+      if (!rental) return res.status(404).json({ message: "Rental not found" });
+      if (rental.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
+      if (rental.status !== "active") return res.status(400).json({ message: "Rental is not active" });
+
+      const { days } = req.body;
+      const extendDays = Math.min(Math.max(parseInt(days) || 1, 1), 30);
+
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(404).json({ message: "User not found" });
+
+      const countries = await getCachedCountries();
+      const resolvedCountry = getUSCountryCode(countries);
+
+      const service = await storage.getService(rental.serviceId);
+      const serviceSlug = service?.slug || "";
+
+      let rentalPriceData;
+      try {
+        rentalPriceData = await proxnumApi.getRentalPrices(serviceSlug, resolvedCountry, extendDays);
+      } catch (e) {}
+
+      const baseDayPrice = rentalPriceData?.price
+        ? parseFloat(rentalPriceData.price)
+        : (service ? parseFloat(service.price) * 2 : parseFloat(rental.price) / (rental.days || 7));
+      const totalBase = baseDayPrice * extendDays;
+      const extensionCost = await calculatePrice(totalBase, serviceSlug, resolvedCountry);
+
+      if (parseFloat(freshUser.balance) < extensionCost) {
+        return res.status(400).json({ message: "Insufficient balance" });
+      }
+
+      if (rental.proxnumId) {
+        try {
+          await proxnumApi.extendRental(rental.proxnumId, extendDays);
+        } catch (e: any) {
+          console.error("Proxnum rental extend error:", e);
+          return res.status(502).json({ message: "Failed to extend rental with provider. Please try again." });
+        }
+      }
+
+      await storage.extendRental(id, extendDays, extensionCost, user.id);
+
+      const updated = await storage.getRental(id);
+      res.json({
+        message: `Rental extended by ${extendDays} day(s). $${extensionCost.toFixed(2)} charged.`,
+        rental: updated,
+      });
+    } catch (err: any) {
+      console.error("Rental extend error:", err);
       res.status(500).json({ message: safeError(err) });
     }
   });
@@ -1864,6 +1940,58 @@ export async function registerRoutes(
       });
 
       res.json({ rentalId: rental.id, phoneNumber: formattedPhone, status: "active", expiresAt: rental.expiresAt });
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
+  });
+
+  app.post("/api/v1/rental/:id/extend", apiKeyLimiter, requireApiKey, async (req, res) => {
+    try {
+      const user = (req as any).apiUser;
+      const id = parseId(req.params.id);
+      if (!id) return res.status(400).json({ error: "Invalid rental ID" });
+      const rental = await storage.getRental(id);
+      if (!rental) return res.status(404).json({ error: "Rental not found" });
+      if (rental.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
+      if (rental.status !== "active") return res.status(400).json({ error: "Rental is not active" });
+
+      const { days } = req.body;
+      const extendDays = Math.min(Math.max(parseInt(days) || 1, 1), 30);
+
+      const freshUser = await storage.getUser(user.id);
+      if (!freshUser) return res.status(404).json({ error: "User not found" });
+
+      const countries = await getCachedCountries();
+      const resolvedCountry = getUSCountryCode(countries);
+
+      const service = await storage.getService(rental.serviceId);
+      const serviceSlug = service?.slug || "";
+
+      let rentalPriceData;
+      try {
+        rentalPriceData = await proxnumApi.getRentalPrices(serviceSlug, resolvedCountry, extendDays);
+      } catch (e) {}
+
+      const baseDayPrice = rentalPriceData?.price
+        ? parseFloat(rentalPriceData.price)
+        : (service ? parseFloat(service.price) * 2 : parseFloat(rental.price) / (rental.days || 7));
+      const totalBase = baseDayPrice * extendDays;
+      const extensionCost = await calculatePrice(totalBase, serviceSlug, resolvedCountry);
+
+      if (parseFloat(freshUser.balance) < extensionCost) {
+        return res.status(400).json({ error: "Insufficient balance" });
+      }
+
+      if (rental.proxnumId) {
+        try {
+          await proxnumApi.extendRental(rental.proxnumId, extendDays);
+        } catch (e: any) {
+          console.error("Proxnum rental extend error:", e);
+          return res.status(502).json({ error: "Failed to extend rental with provider" });
+        }
+      }
+
+      await storage.extendRental(id, extendDays, extensionCost, user.id);
+      const updated = await storage.getRental(id);
+      res.json({ rentalId: id, days: updated?.days, expiresAt: updated?.expiresAt, charged: extensionCost.toFixed(2) });
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 

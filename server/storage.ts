@@ -194,6 +194,9 @@ try {
 try {
   sqlite.exec(`ALTER TABLE users ADD COLUMN api_key_prefix TEXT`);
 } catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE services ADD COLUMN cost_price TEXT`);
+} catch (e) {}
 
 function hashApiKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
@@ -201,7 +204,7 @@ function hashApiKey(key: string): string {
 
 function seedSettings() {
   const defaults: Record<string, string> = {
-    price_multiplier: "1.5",
+    price_multiplier: "1.0",
     default_country: "us",
   };
   for (const [key, value] of Object.entries(defaults)) {
@@ -209,6 +212,11 @@ function seedSettings() {
     if (!existing) {
       db.insert(settings).values({ key, value }).run();
     }
+  }
+  const mult = db.select().from(settings).where(eq(settings.key, "price_multiplier")).get();
+  if (mult && mult.value === "1.5") {
+    db.update(settings).set({ value: "1.0" }).where(eq(settings.key, "price_multiplier")).run();
+    console.log("[MIGRATION] Updated price_multiplier from 1.5 to 1.0 (tiered markup now handles pricing)");
   }
 }
 
@@ -302,6 +310,7 @@ export interface IStorage {
   getActiveRentals(userId: number): Promise<Rental[]>;
   updateRentalStatus(id: number, status: string): Promise<void>;
   cancelRental(id: number): Promise<void>;
+  extendRental(id: number, additionalDays: number, additionalCost: number, userId: number): Promise<void>;
   getAllRentals(): Promise<Rental[]>;
 
   createRentalMessage(data: InsertRentalMessage): Promise<RentalMessage>;
@@ -437,8 +446,9 @@ export class DatabaseStorage implements IStorage {
     for (const svc of serviceList) {
       const existing = db.select().from(services).where(eq(services.slug, svc.slug)).get();
       if (existing) {
-        db.update(services).set({ price: svc.price, isActive: svc.isActive, category: svc.category })
-          .where(eq(services.slug, svc.slug)).run();
+        const updateData: any = { price: svc.price, isActive: svc.isActive, category: svc.category };
+        if (svc.costPrice !== undefined) updateData.costPrice = svc.costPrice;
+        db.update(services).set(updateData).where(eq(services.slug, svc.slug)).run();
       } else {
         db.insert(services).values(svc).run();
       }
@@ -606,6 +616,34 @@ export class DatabaseStorage implements IStorage {
 
   async cancelRental(id: number): Promise<void> {
     db.update(rentals).set({ status: "cancelled", cancelledAt: new Date().toISOString() }).where(eq(rentals.id, id)).run();
+  }
+
+  async extendRental(id: number, additionalDays: number, additionalCost: number, userId: number): Promise<void> {
+    sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      const deductResult = sqlite.prepare(
+        `UPDATE users SET balance = printf('%.2f', CAST(balance AS REAL) - ?) WHERE id = ? AND CAST(balance AS REAL) >= ?`
+      ).run(additionalCost, userId, additionalCost);
+      if (deductResult.changes === 0) {
+        throw new Error("Insufficient balance");
+      }
+
+      const rental = sqlite.prepare(`SELECT * FROM rentals WHERE id = ? AND status = 'active'`).get(id) as any;
+      if (!rental) throw new Error("Rental not found or not active");
+      const currentExpiry = new Date(rental.expires_at);
+      const newExpiry = new Date(currentExpiry.getTime() + additionalDays * 24 * 60 * 60 * 1000);
+      const newDays = (rental.days || 0) + additionalDays;
+      const newPrice = (parseFloat(rental.price) + additionalCost).toFixed(2);
+      sqlite.prepare(`UPDATE rentals SET expires_at = ?, days = ?, price = ? WHERE id = ?`).run(newExpiry.toISOString(), newDays, newPrice, id);
+
+      sqlite.prepare(
+        `INSERT INTO transactions (user_id, type, amount, description, order_id, stripe_session_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(userId, "purchase", `-${additionalCost.toFixed(2)}`, `Rental extension (+${additionalDays} days)`, id, null, new Date().toISOString());
+      sqlite.exec("COMMIT");
+    } catch (err) {
+      try { sqlite.exec("ROLLBACK"); } catch (_) {}
+      throw err;
+    }
   }
 
   async getAllRentals(): Promise<Rental[]> {

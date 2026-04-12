@@ -95,8 +95,16 @@ const ENDPOINTS = [
     path: "/api/v1/rental",
     desc: "Rent a long-term phone number (default 7 days)",
     auth: true,
-    body: `{ "service": "whatsapp", "country": "us", "days": 7 }`,
+    body: `{ "service": "whatsapp", "days": 7 }`,
     response: `{ "rentalId": 5, "phoneNumber": "+12125559876", "status": "active", "expiresAt": "..." }`,
+  },
+  {
+    method: "POST",
+    path: "/api/v1/rental/:id/extend",
+    desc: "Extend an active rental by additional days (1-30)",
+    auth: true,
+    body: `{ "days": 7 }`,
+    response: `{ "rentalId": 5, "days": 14, "expiresAt": "...", "charged": "1.40" }`,
   },
 ];
 

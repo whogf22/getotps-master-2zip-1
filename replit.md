@@ -16,7 +16,7 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
 - **Auth**: Bearer token via `Authorization: Bearer {PROXNUM_API_KEY}` + `Accept: application/json` header
 - **Service Sync**: On startup, fetches all services and aggregated prices from Proxnum, applies global markup multiplier, upserts into DB
 - **Country Codes**: Proxnum uses numeric country codes (e.g., "12" = USA virtual, "187" = USA). Platform is USA-only — country is hardcoded via `getUSCountryCode()`
-- **Price Markup**: `finalPrice = basePrice × globalMultiplier × serviceMultiplier` — settings stored in DB `settings` table
+- **Price Markup**: Tiered markup on Proxnum `base_price` (our cost): ≤$0.05 → 3×, $0.05-$0.50 → 2×, >$0.50 → 1.5×, then × global multiplier (default 1.0) × service multiplier. $0.05 minimum price floor. `costPrice` stored in services table for profit tracking.
 - **Virtual Numbers (Reseller Endpoints)**:
   - `POST /resell/virtual/buy` — body: `{service, country}` → response: `{success, activation: {id, phone, activation_id, msg, amount_paid, status}}`
   - `GET /resell/virtual/{activation_id}/status` → response: `{success, status: "completed", code: "1234", activation: {id, phone, activation_id}}`
@@ -25,7 +25,7 @@ GetOTPs is a PERN-style app (SQLite + Express + React/Vite) where users rent tem
   - `GET /resell/activations?page=1&per_page=25` — paginated activation list
   - `GET /resell/price?service=ig&country=6` — per-service price check
 - **Normalized Error Codes**: `no_numbers`, `insufficient_balance`, `service_unavailable`, `cancel_rejected`
-- **Rentals**: POST `/rental/buy`, GET `/rental/{id}/status`, POST `/rental/cancel`, GET `/rentals/{id}/messages`
+- **Rentals**: POST `/rental/buy`, GET `/rental/{id}/status`, POST `/rental/cancel`, GET `/rentals/{id}/messages`, POST `/rental/{id}/extend` (extend by days)
 - **Note**: PROXNUM_API_KEY must be a real API token generated from Proxnum Profile → API Keys (not the license key)
 
 ## Circle Programmable Wallets Integration
@@ -98,6 +98,7 @@ shared/
   schema.ts                  - Drizzle schema definitions
 scripts/
   reset-admin-password.ts    - Admin password reset utility
+  post-merge.sh              - Post-merge setup script (npm install)
 ```
 
 ## API Endpoints
@@ -106,11 +107,11 @@ scripts/
 - **Services**: GET /api/services, /api/countries, /api/prices
 - **Stats**: GET /api/stats (public)
 - **Orders (Virtual)**: POST /api/orders, GET /api/orders/active, POST /:id/check-sms, /:id/cancel, /:id/resend
-- **Rentals**: POST /api/rentals, GET /api/rentals/active, GET /:id/messages, POST /:id/cancel
+- **Rentals**: POST /api/rentals, GET /api/rentals/active, GET /:id/messages, POST /:id/cancel, POST /:id/extend
 - **Circle Wallet**: GET /api/circle/configured, GET /wallet, POST /wallet/create, POST /check-deposits
 - **Crypto (Legacy)**: GET /api/crypto/currencies, POST /create-deposit, POST /:id/submit-hash
 - **Admin**: GET /api/admin/stats, /users, /orders, /transactions, /audit-logs, PUT /services/:id, GET/PUT /settings, POST /users/:id/add-balance, POST /users/:id/suspend, POST /crypto/:id/confirm, POST /crypto/:id/reject, GET /crypto/pending, GET /crypto/all, GET /export/users|orders|transactions
-- **API v1**: GET /api/v1/services, GET /price, POST /order, GET /order/:id, POST /order/:id/cancel, POST /order/:id/resend, POST /rental
+- **API v1**: GET /api/v1/services, GET /price, POST /order, GET /order/:id, POST /order/:id/cancel, POST /order/:id/resend, POST /rental, POST /rental/:id/extend
 
 ## Admin Panel
 - Routes: /admin, /admin/users, /admin/deposits, /admin/settings

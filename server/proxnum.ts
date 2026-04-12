@@ -218,12 +218,18 @@ export const proxnumApi = {
     return request("POST", "/rental/cancel", { id }, true, 0);
   },
 
+  extendRental(id: string | number, time: number) {
+    return request("POST", `/rental/${id}/extend`, { time }, true, 0);
+  },
+
   getRentalMessages(rentalId: string | number) {
     return request("GET", `/rentals/${rentalId}/messages`);
   },
 
-  getRentalPrices(service: string, country: string) {
-    return request("GET", "/rental/prices", { service, country }, false);
+  getRentalPrices(service: string, country: string, time?: number) {
+    const params: Record<string, any> = { service, country };
+    if (time) params.time = time;
+    return request("GET", "/rental/prices", params, false);
   },
 
   getRentalAvailability(country?: string, service?: string) {
