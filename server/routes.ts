@@ -61,9 +61,10 @@ async function getServiceMultiplier(service: string, country: string): Promise<n
 }
 
 async function calculatePrice(basePrice: number, service: string, country: string): Promise<number> {
+  const tiered = applyTieredMarkup(basePrice);
   const globalMult = await getMarkupMultiplier();
   const serviceMult = await getServiceMultiplier(service, country);
-  const price = basePrice * globalMult * serviceMult;
+  const price = tiered * globalMult * serviceMult;
   return Math.max(price, PRICE_FLOOR);
 }
 
@@ -844,9 +845,10 @@ export async function registerRoutes(
         rentalPriceData = await proxnumApi.getRentalPrices(service.slug, resolvedCountry, rentalDays);
       } catch (e) {}
 
+      const baseCost = service.costPrice ? parseFloat(service.costPrice) : parseFloat(service.price);
       const baseDayPrice = rentalPriceData?.price
         ? parseFloat(rentalPriceData.price)
-        : parseFloat(service.price) * 2;
+        : baseCost * 2;
       const totalBase = baseDayPrice * rentalDays;
       const finalPrice = await calculatePrice(totalBase, service.slug, resolvedCountry);
 
@@ -1038,9 +1040,10 @@ export async function registerRoutes(
         rentalPriceData = await proxnumApi.getRentalPrices(serviceSlug, resolvedCountry, extendDays);
       } catch (e) {}
 
+      const baseCost = service?.costPrice ? parseFloat(service.costPrice) : (service ? parseFloat(service.price) : parseFloat(rental.price) / (rental.days || 7));
       const baseDayPrice = rentalPriceData?.price
         ? parseFloat(rentalPriceData.price)
-        : (service ? parseFloat(service.price) * 2 : parseFloat(rental.price) / (rental.days || 7));
+        : baseCost * 2;
       const totalBase = baseDayPrice * extendDays;
       const extensionCost = await calculatePrice(totalBase, serviceSlug, resolvedCountry);
 
@@ -1901,7 +1904,8 @@ export async function registerRoutes(
       const countries = await getCachedCountries();
       const rentalCountry = getUSCountryCode(countries);
 
-      const baseDayPrice = parseFloat(svc.price) * 2;
+      const baseCost = svc.costPrice ? parseFloat(svc.costPrice) : parseFloat(svc.price);
+      const baseDayPrice = baseCost * 2;
       const totalBase = baseDayPrice * rentalDays;
       const finalPrice = await calculatePrice(totalBase, svc.slug, rentalCountry);
 
@@ -1970,9 +1974,10 @@ export async function registerRoutes(
         rentalPriceData = await proxnumApi.getRentalPrices(serviceSlug, resolvedCountry, extendDays);
       } catch (e) {}
 
+      const baseCost = service?.costPrice ? parseFloat(service.costPrice) : (service ? parseFloat(service.price) : parseFloat(rental.price) / (rental.days || 7));
       const baseDayPrice = rentalPriceData?.price
         ? parseFloat(rentalPriceData.price)
-        : (service ? parseFloat(service.price) * 2 : parseFloat(rental.price) / (rental.days || 7));
+        : baseCost * 2;
       const totalBase = baseDayPrice * extendDays;
       const extensionCost = await calculatePrice(totalBase, serviceSlug, resolvedCountry);
 
