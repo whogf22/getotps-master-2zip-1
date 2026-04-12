@@ -30,7 +30,7 @@ export default function AdminSettings() {
 
   useEffect(() => {
     if (settings) {
-      setMultiplier(settings.price_multiplier || "1.5");
+      setMultiplier(settings.price_multiplier || "1.0");
       setDefaultCountry(settings.default_country || "us");
       setSvcMultipliers(settings.service_multipliers || {});
     }
@@ -60,7 +60,7 @@ export default function AdminSettings() {
 
   const handleReset = () => {
     if (settings) {
-      setMultiplier(settings.price_multiplier || "1.5");
+      setMultiplier(settings.price_multiplier || "1.0");
       setDefaultCountry(settings.default_country || "us");
       setSvcMultipliers(settings.service_multipliers || {});
     }
@@ -83,7 +83,7 @@ export default function AdminSettings() {
 
   const origMultipliers = settings?.service_multipliers || {};
   const hasChanges =
-    multiplier !== (settings?.price_multiplier || "1.5") ||
+    multiplier !== (settings?.price_multiplier || "1.0") ||
     defaultCountry !== (settings?.default_country || "us") ||
     JSON.stringify(svcMultipliers) !== JSON.stringify(origMultipliers);
 
