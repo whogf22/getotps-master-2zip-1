@@ -133,19 +133,22 @@ async function syncProxnumServices(): Promise<void> {
   }
 }
 
-const CRYPTO_WALLETS: Record<string, string> = {
-  BTC: process.env.WALLET_BTC || "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-  ETH: process.env.WALLET_ETH || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  USDT_TRC20: process.env.WALLET_USDT_TRC20 || "TN2Y5mFKbE2BC3RLeFz4BEMnGpGEaVNbHv",
-  USDT_ERC20: process.env.WALLET_USDT_ERC20 || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  USDC: process.env.WALLET_USDC || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  LTC: process.env.WALLET_LTC || "ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kgmn4n9",
-};
+const CRYPTO_WALLETS: Record<string, string> = Object.fromEntries(
+  Object.entries({
+    BTC: process.env.WALLET_BTC,
+    ETH: process.env.WALLET_ETH,
+    USDT_TRC20: process.env.WALLET_USDT_TRC20,
+    USDT_ERC20: process.env.WALLET_USDT_ERC20,
+    USDC: process.env.WALLET_USDC,
+    LTC: process.env.WALLET_LTC,
+  }).filter(([_, v]) => v) as [string, string][]
+);
 
 const MAX_DEPOSIT_USD = 10000;
 
-function parseId(param: string): number | null {
-  const n = Number(param);
+function parseId(param: string | string[]): number | null {
+  const val = Array.isArray(param) ? param[0] : param;
+  const n = Number(val);
   if (isNaN(n) || !Number.isInteger(n) || n <= 0) return null;
   return n;
 }

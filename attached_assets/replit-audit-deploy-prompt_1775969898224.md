@@ -1,0 +1,269 @@
+You are a senior DevOps + security engineer. This codebase is a Node.js/Express + React/Vite SaaS platform (virtual OTP/phone number service) using Drizzle ORM, SQLite, express-session, Proxnum API, and Circle (USDC). All 31 code review fixes have been applied. Your job now is to:
+
+1. **AUDIT** every fix to confirm it's actually working (not just written)
+2. **HARDEN** anything the fixes missed
+3. **DEPLOY** to production
+
+Do NOT ask questions. Do NOT skip steps. Execute everything sequentially. Log results to a file `audit-report.md` as you go.
+
+---
+
+## STAGE 1: FULL CODEBASE AUDIT (verify every fix is real)
+
+### 1A — Static Analysis Sweep
+Run these exact commands and fix ANY issues found:
+
+```bash
+# Dependency vulnerabilities
+npm audit --audit-level=high 2>&1 | tee audit-deps.log
+# If critical/high vulns found, run: npm audit fix --force
+
+# Dead code & unused packages
+npx depcheck 2>&1 | tee audit-depcheck.log
+# Remove every unused dependency listed
+
+# Find leftover debugging
+grep -rn "console\.log\|console\.debug\|debugger" server/ --include="*.ts" --include="*.js" | grep -v node_modules | grep -v "\.test\." | tee audit-debug.log
+# Review each — remove debugging logs, keep only structured production logging
+
+# Sensitive data in code
+grep -rn "password\|secret\|apikey\|api_key\|private_key\|token" server/ --include="*.ts" --include="*.js" -i | grep -v node_modules | grep -v "\.test\." | grep -v "\.env" | tee audit-secrets.log
+# Verify NONE of these are hardcoded values — all must reference env vars
+
+# Find TODO/FIXME/HACK
+grep -rn "TODO\|FIXME\|HACK\|XXX\|TEMP\|WORKAROUND" server/ client/ --include="*.ts" --include="*.tsx" --include="*.js" | grep -v node_modules | tee audit-todos.log
+# Fix or remove ALL of them. Zero tolerance.
+
+# Stripe remnants (should be fully removed)
+grep -rn "stripe\|STRIPE" . --include="*.ts" --include="*.tsx" --include="*.js" --include="*.json" --include="*.env*" | grep -v node_modules | grep -v audit
+# If ANY results: delete all Stripe code, uninstall stripe packages
+
+# ws package remnants (should be removed)
+grep -rn "\"ws\"\|from 'ws'\|require.*ws" . --include="*.ts" --include="*.js" --include="*.json" | grep -v node_modules
+# If ANY results: remove
+
+# Check all env vars are documented
+cat .env.example 2>/dev/null || echo "MISSING .env.example — CREATE IT NOW"
+# .env.example must list every required env var with descriptions, no real values
+```
+
+### 1B — Verify Each Critical Fix
+
+**CRIT-1 (trust proxy):**
+```bash
+grep -rn "trust proxy" server/
+```
+Must find `app.set('trust proxy', 1)` BEFORE any middleware. If missing → add it.
+
+**CRIT-2 (session store):**
+```bash
+grep -rn "MemoryStore\|connect-pg-simple\|connect-sqlite\|better-sqlite3-session-store\|session.*store" server/
+```
+Must NOT use default MemoryStore. Must have a persistent store configured. If using SQLite, verify the session store package is installed and configured with `createTableIfMissing: true`.
+
+**CRIT-3 (expired order cleanup):**
+```bash
+grep -rn "cleanup\|expired\|setInterval" server/
+```
+Must find: a cleanup function, running on interval (≤5 min), that refunds pending orders older than threshold, inside a transaction. Test: manually insert a pending order with old timestamp → wait for cleanup → verify balance refunded and status = expired.
+
+**CRIT-4 (foreign keys):**
+```bash
+grep -rn "foreign_keys\|PRAGMA\|references\|\.references(" server/
+```
+For SQLite: must find `PRAGMA foreign_keys = ON` executed on EVERY new connection (not just once at startup — SQLite resets this per connection). Test: try inserting an order with userId=999999 (non-existent) → must fail with FK constraint error.
+
+**CRIT-5 (transactional refunds):**
+```bash
+grep -rn "transaction\|\.transaction(" server/ | grep -i "cancel\|refund"
+```
+Every cancel/refund operation must be wrapped in db.transaction(). No balance update should exist outside a transaction.
+
+**CRIT-6 (log sanitization):**
+```bash
+grep -rn "sanitize\|REDACTED\|redact" server/
+```
+Must find sanitization utility. Verify it covers: apiKey, token, password, secret, authorization, cookie.
+
+### 1C — Verify Each High Fix
+
+**HIGH-1 (CSRF):** Verify CSRF middleware exists on all POST/PUT/PATCH/DELETE routes. Check frontend sends x-csrf-token header.
+
+**HIGH-2 (API key hashing):** Verify no plain-text API keys exist in the database. Check that `/api/auth/me` returns only a prefix, never the full key. Run: `SELECT * FROM api_keys LIMIT 5;` — should see keyHash column, no plain key column.
+
+**HIGH-3 (Rental UI):** Verify frontend has a Rentals page with: list plans, rent button, active rentals view, cancel button, history. Navigate to /rentals (or wherever it's routed) and confirm it renders.
+
+**HIGH-4 (Password reset):** Verify forgot-password endpoint generates a token, stores it hashed with expiry. Verify reset-password endpoint validates and consumes the token. Test the full flow.
+
+**HIGH-5 (Dynamic countries):** Verify Buy page fetches countries from API, not hardcoded. Check the endpoint caches results.
+
+**HIGH-6 (Proxnum timeouts):** Verify all Proxnum calls use the wrapper with timeout (≤10s) and retries (≤3). No raw axios/fetch to Proxnum should exist outside the wrapper.
+
+**HIGH-7 (Password length):** Run:
+```bash
+grep -rn "minLength\|minlength\|min.*length\|\.length.*[<>=].*[0-9]" server/ client/ --include="*.ts" --include="*.tsx" | grep -i pass
+```
+All must say 8. Zero instances of 6.
+
+### 1D — Verify Medium & Low Fixes
+
+Run through each: audit_logs table exists in schema, Circle polling is batched, API docs match actual routes, admin panel has all 7 views (orders/rentals/audit/ban/export/password-reset/services), Proxnum balance KPI works, email service wired, rental cancellation gives prorated refund, landing stats are dynamic, price cache has TTL, status labels consistent (no "waiting"), profile editable, API key regen has confirmation dialog, all route handlers have try/catch, /me doesn't leak full key, admin recovery path exists.
+
+For EACH one you can't verify → fix it now.
+
+---
+
+## STAGE 2: SECURITY HARDENING
+
+### 2A — HTTP Security Headers
+Add helmet middleware if not present:
+```ts
+import helmet from 'helmet';
+app.use(helmet({
+  contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"] } },
+  crossOriginEmbedderPolicy: false,
+}));
+```
+Install helmet if missing: `npm install helmet`
+
+### 2B — Rate Limiting Hardening
+Verify rate limiting exists on:
+- `/api/auth/login` — max 5 attempts per 15 min per IP
+- `/api/auth/register` — max 3 per hour per IP
+- `/api/auth/forgot-password` — max 3 per hour per IP
+- `/api/keys/generate` — max 5 per hour per user
+- All other API routes — max 100 per min per IP
+
+If any rate limit is missing → add it using `express-rate-limit`.
+
+### 2C — Input Validation
+Verify ALL user inputs are validated/sanitized:
+```bash
+grep -rn "req\.body\|req\.params\|req\.query" server/ --include="*.ts"
+```
+Every instance must have validation (zod, joi, or manual checks). No raw `req.body.anything` should reach the database without validation.
+
+### 2D — SQLite Production Hardening
+```bash
+grep -rn "WAL\|journal_mode\|busy_timeout\|synchronous" server/
+```
+Ensure these PRAGMAs are set on connection:
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 5000;
+PRAGMA synchronous = NORMAL;
+PRAGMA foreign_keys = ON;
+```
+WAL mode is critical for concurrent reads during writes. busy_timeout prevents "database is locked" errors.
+
+### 2E — Error Handling
+Add a global error handler if missing:
+```ts
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error(`[${new Date().toISOString()}] ${req.method} ${req.path}`, err.message);
+  if (err.code === 'EBADCSRFTOKEN') return res.status(403).json({ error: 'Invalid CSRF token' });
+  res.status(err.status || 500).json({ error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message });
+});
+```
+Verify NO route sends raw error messages or stack traces to users in production.
+
+---
+
+## STAGE 3: BUILD & PRE-DEPLOY CHECKS
+
+```bash
+# Clean install
+rm -rf node_modules
+npm ci
+
+# Build frontend
+npm run build 2>&1 | tee build-frontend.log
+# Must succeed with zero errors
+
+# Build backend (if TypeScript)
+npx tsc --noEmit 2>&1 | tee build-backend.log
+# Must succeed with zero errors
+
+# Run existing tests (if any)
+npm test 2>&1 | tee test-results.log || echo "No tests configured"
+
+# Verify .replit and replit.nix are correct
+cat .replit
+# run command must point to production start (not dev mode)
+# Ensure it runs: NODE_ENV=production node dist/index.js (or equivalent)
+
+# Check package.json scripts
+cat package.json | grep -A 20 '"scripts"'
+# Must have: "start" (production), "build" (compiles everything), "dev" (development)
+
+# Verify all env vars are set
+node -e "
+const required = ['DATABASE_URL', 'SESSION_SECRET', 'PROXNUM_API_KEY', 'PROXNUM_API_URL'];
+const missing = required.filter(k => !process.env[k]);
+if (missing.length) { console.error('MISSING ENV VARS:', missing); process.exit(1); }
+console.log('All required env vars present');
+"
+```
+
+---
+
+## STAGE 4: DEPLOY
+
+```bash
+# Set NODE_ENV
+export NODE_ENV=production
+
+# Run database migrations
+npx drizzle-kit migrate 2>&1 | tee migration.log
+# Must succeed. If errors → fix schema, re-run.
+
+# Start the production build
+npm run build && npm start
+```
+
+After the app starts:
+1. Hit the health endpoint (GET /) — must return 200
+2. Try registering a new user
+3. Try logging in
+4. Check admin panel loads
+5. Verify rate limiting works (hit login 6 times rapidly)
+6. Check session persists across page refresh
+7. Verify CSRF token is being sent/validated
+
+Once verified, trigger Replit deployment:
+- Go to the Deploy tab → Deploy to production
+- Set environment variables in the Secrets panel if not already set
+- Ensure the deployment uses the production build command
+
+---
+
+## STAGE 5: POST-DEPLOY MONITORING
+
+After deployment is live:
+
+```bash
+# Health check
+PROD_URL="YOUR_REPLIT_DEPLOY_URL"
+curl -s -o /dev/null -w "Status: %{http_code}, Time: %{time_total}s\n" "$PROD_URL"
+# Must be: Status 200, Time < 2s
+
+# Check for errors in logs
+# Monitor Replit deployment logs for first 10 minutes
+# Watch for: uncaught exceptions, memory warnings, DB errors
+```
+
+Write final status to `audit-report.md`:
+```markdown
+# Post-Fix Audit Report
+Date: [current date]
+## Critical Fixes: [PASS/FAIL for each CRIT-1 through CRIT-6]
+## High Fixes: [PASS/FAIL for each HIGH-1 through HIGH-7]
+## Medium Fixes: [PASS/FAIL for each MED-1 through MED-10]
+## Low Fixes: [PASS/FAIL for each LOW-1 through LOW-8]
+## Security Hardening: [PASS/FAIL]
+## Build Status: [PASS/FAIL]
+## Deployment Status: [PASS/FAIL]
+## Total: X/31 fixes verified, Y issues remaining
+```
+
+**Start STAGE 1 now. Do not stop until all 5 stages are complete and audit-report.md is written.**

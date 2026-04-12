@@ -18,6 +18,8 @@ import crypto from "crypto";
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
+sqlite.pragma("busy_timeout = 5000");
+sqlite.pragma("synchronous = NORMAL");
 
 export const db = drizzle(sqlite);
 
