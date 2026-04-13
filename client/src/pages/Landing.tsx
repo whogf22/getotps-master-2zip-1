@@ -3,10 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
-import { HeroScene } from "@/components/3d/HeroScene";
-import { PhoneMockup } from "@/components/3d/PhoneMockup";
-import { SceneErrorBoundary } from "@/components/3d/SceneErrorBoundary";
-import { LiveOTPTicker, NetworkStats } from "@/components/3d/LiveOTPFeed";
 import {
   Zap, Shield, Globe, ArrowRight, Star, Lock,
   ChevronDown, CheckCircle, Cpu, Key, RefreshCw,
@@ -234,11 +230,9 @@ export default function Landing() {
         </div>
       </header>
 
-      {/* ════════ HERO — Full immersive ════════ */}
+      {/* ════════ HERO ════════ */}
       <section className="l-hero">
-        <SceneErrorBoundary fallback={<div className="absolute inset-0 hero-fallback-bg" />}>
-          <HeroScene />
-        </SceneErrorBoundary>
+        <div className="absolute inset-0 hero-fallback-bg" />
 
         <div className="l-hero-gradient-l" />
         <div className="l-hero-gradient-b" />
@@ -278,18 +272,12 @@ export default function Landing() {
           </div>
 
           <div className="l-hero-right" style={{ transform: `translate(${mx * 6}px, ${my * 4}px)` }}>
-            <div className="l-hero-phone-zone">
-              <PhoneMockup />
-              <LiveOTPTicker />
-            </div>
+            <DashboardPanel />
           </div>
         </div>
 
         <div className="l-scroll-cue"><div className="l-scroll-dot" /></div>
       </section>
-
-      {/* ════════ NETWORK STATS BAR ════════ */}
-      <NetworkStats />
 
       {/* ════════ TWO SERVICES ════════ */}
       <section className="l-section">

@@ -258,6 +258,15 @@ export async function registerRoutes(
       if (!username || !email || !password) {
         return res.status(400).json({ message: "All fields required" });
       }
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+      if (username.length < 3 || username.length > 32 || !/^[a-zA-Z0-9_-]+$/.test(username)) {
+        return res.status(400).json({ message: "Username must be 3-32 characters (letters, numbers, _ or -)" });
+      }
       const existing = await storage.getUserByEmail(email);
       if (existing) return res.status(400).json({ message: "Email already registered" });
       const existingUsername = await storage.getUserByUsername(username);
@@ -268,7 +277,7 @@ export async function registerRoutes(
 
       req.login(user, (err) => {
         if (err) return res.status(500).json({ message: "Login failed after registration" });
-        const { password: _, ...safeUser } = user;
+        const { password: _, apiKey: __, ...safeUser } = user;
         res.json(safeUser);
       });
     } catch (err: any) {
@@ -282,7 +291,7 @@ export async function registerRoutes(
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
       req.login(user, (loginErr) => {
         if (loginErr) return res.status(500).json({ message: "Login failed" });
-        const { password: _, ...safeUser } = user;
+        const { password: _, apiKey: __, ...safeUser } = user;
         res.json(safeUser);
       });
     })(req, res, next);
@@ -296,7 +305,7 @@ export async function registerRoutes(
     const user = req.user as any;
     const freshUser = await storage.getUser(user.id);
     if (!freshUser) return res.status(404).json({ message: "User not found" });
-    const { password: _, ...safeUser } = freshUser;
+    const { password: _, apiKey: __, ...safeUser } = freshUser;
     res.json(safeUser);
   });
 
@@ -826,12 +835,14 @@ export async function registerRoutes(
     try {
       const user = req.user as any;
       const { txHash } = req.body;
-      if (!txHash) return res.status(400).json({ message: "Transaction hash is required" });
+      if (!txHash || typeof txHash !== "string") return res.status(400).json({ message: "Transaction hash is required" });
+      const trimmedHash = txHash.trim();
+      if (trimmedHash.length < 10 || trimmedHash.length > 128) return res.status(400).json({ message: "Invalid transaction hash format" });
       const deposit = await storage.getCryptoDeposit(Number(req.params.id));
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
       if (deposit.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
       if (deposit.status !== "pending") return res.status(400).json({ message: "Deposit is not pending" });
-      await storage.updateCryptoDeposit(deposit.id, { txHash, status: "confirming" });
+      await storage.updateCryptoDeposit(deposit.id, { txHash: trimmedHash, status: "confirming" });
       res.json({ message: "Transaction hash submitted. Awaiting confirmation." });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
@@ -876,7 +887,7 @@ export async function registerRoutes(
   app.get("/api/admin/users", requireAdmin, async (_req, res) => {
     const allUsers = await storage.getAllUsers();
     const allOrders = await storage.getAllOrders();
-    const result = allUsers.map(({ password: _, ...u }) => {
+    const result = allUsers.map(({ password: _, apiKey: __, ...u }) => {
       const userOrders = allOrders.filter(o => o.userId === u.id);
       const lastOrder = userOrders.length > 0
         ? userOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]

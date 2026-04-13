@@ -134,19 +134,22 @@ function seedSettings() {
 }
 
 async function seedDatabase() {
-  const existingAdmin = db.select().from(users).where(eq(users.email, "admin@getotps.com")).get();
+  const adminEmail = process.env.ADMIN_EMAIL || "admin@getotps.com";
+  const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === "production" ? (() => { throw new Error("ADMIN_PASSWORD must be set in production"); })() : "admin123");
+  const adminUsername = process.env.ADMIN_USERNAME || "admin";
+  const existingAdmin = db.select().from(users).where(eq(users.email, adminEmail)).get();
   if (!existingAdmin) {
-    const hashedPassword = await bcrypt.hash("admin123", 10);
+    const hashedPassword = await bcrypt.hash(adminPassword, 10);
     const apiKey = crypto.randomBytes(32).toString("hex");
     db.insert(users).values({
-      username: "admin",
-      email: "admin@getotps.com",
+      username: adminUsername,
+      email: adminEmail,
       password: hashedPassword,
       balance: "100.00",
       apiKey,
       role: "admin",
     }).run();
-    console.log("Created default admin user: admin@getotps.com / admin123");
+    console.log(`Created admin user: ${adminEmail}`);
   }
   seedSettings();
 }
