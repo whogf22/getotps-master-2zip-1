@@ -45,3 +45,9 @@ replit.nix
 
 # Coverage
 coverage/
+
+# Attached assets (Replit artifacts)
+attached_assets/
+
+# shadcn config
+components.json
