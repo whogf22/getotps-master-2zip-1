@@ -160,6 +160,11 @@ export async function registerRoutes(
   
   const isProduction = process.env.NODE_ENV === "production";
 
+  // Trust proxy for secure cookies behind reverse proxy (Render/Cloudflare)
+  if (isProduction) {
+    app.set("trust proxy", 1);
+  }
+
   if (!process.env.SESSION_SECRET) {
     if (isProduction) {
       throw new Error("FATAL: SESSION_SECRET must be set in production. Refusing to start with insecure default.");
