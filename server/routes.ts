@@ -1,11 +1,13 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, sqlite as sqliteClient } from "./storage";
 import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcryptjs";
+import rateLimit from "express-rate-limit";
+import BetterSqlite3SessionStore from "better-sqlite3-session-store";
 
 declare module "express-session" {
   interface SessionData {
@@ -62,6 +64,13 @@ function extractOTPFromText(text: string): string | null {
     if (match) return match[1];
   }
   return null;
+}
+
+function safeError(err: any): string {
+  if (process.env.NODE_ENV === "production") {
+    return "Something went wrong. Please try again.";
+  }
+  return err?.message || "Unknown error";
 }
 
 async function syncProxnumServices(): Promise<void> {
@@ -124,17 +133,21 @@ async function syncProxnumServices(): Promise<void> {
 }
 
 const CRYPTO_WALLETS: Record<string, string> = {
-  BTC: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-  ETH: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  USDT_TRC20: "TN2Y5mFKbE2BC3RLeFz4BEMnGpGEaVNbHv",
-  USDT_ERC20: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  USDC: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  LTC: "ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kgmn4n9",
+  BTC: process.env.CRYPTO_WALLET_BTC || "",
+  ETH: process.env.CRYPTO_WALLET_ETH || "",
+  USDT_TRC20: process.env.CRYPTO_WALLET_USDT_TRC20 || "",
+  USDT_ERC20: process.env.CRYPTO_WALLET_USDT_ERC20 || "",
+  USDC: process.env.CRYPTO_WALLET_USDC || "",
+  LTC: process.env.CRYPTO_WALLET_LTC || "",
 };
 
 const CRYPTO_RATES: Record<string, number> = {
-  BTC: 84250.00, ETH: 3420.00, USDT_TRC20: 1.00,
-  USDT_ERC20: 1.00, USDC: 1.00, LTC: 92.50,
+  BTC: parseFloat(process.env.CRYPTO_RATE_BTC || "84250"),
+  ETH: parseFloat(process.env.CRYPTO_RATE_ETH || "3420"),
+  USDT_TRC20: parseFloat(process.env.CRYPTO_RATE_USDT || "1"),
+  USDT_ERC20: parseFloat(process.env.CRYPTO_RATE_USDT || "1"),
+  USDC: parseFloat(process.env.CRYPTO_RATE_USDC || "1"),
+  LTC: parseFloat(process.env.CRYPTO_RATE_LTC || "92.50"),
 };
 
 export async function registerRoutes(
@@ -142,12 +155,33 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  // SQLite-backed session store (no memory leaks)
+  const SqliteStore = BetterSqlite3SessionStore(session);
+  
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (!process.env.SESSION_SECRET) {
+    if (isProduction) {
+      throw new Error("FATAL: SESSION_SECRET must be set in production. Refusing to start with insecure default.");
+    }
+    console.warn("WARNING: SESSION_SECRET not set. Using insecure default. Set it in .env for production!");
+  }
+
   app.use(
     session({
-      secret: process.env.SESSION_SECRET || "getotps-secret-key-2024",
+      store: new SqliteStore({
+        client: sqliteClient,
+        expired: { clear: true, intervalMs: 15 * 60 * 1000 },
+      }),
+      secret: process.env.SESSION_SECRET || "getotps-dev-insecure-fallback",
       resave: false,
       saveUninitialized: false,
-      cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 },
+      cookie: {
+        secure: isProduction,
+        httpOnly: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        sameSite: "lax",
+      },
     })
   );
 
@@ -188,9 +222,37 @@ export async function registerRoutes(
     res.status(403).json({ message: "Forbidden" });
   }
 
+  // ========== RATE LIMITING ==========
+
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many attempts. Please try again in 15 minutes." },
+  });
+
+  const apiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many requests. Please slow down." },
+  });
+
+  const orderLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many order requests. Please slow down." },
+  });
+
+  app.use("/api", apiLimiter);
+
   // ========== AUTH ROUTES ==========
 
-  app.post("/api/auth/register", async (req, res) => {
+  app.post("/api/auth/register", authLimiter, async (req, res) => {
     try {
       const { username, email, password } = req.body;
       if (!username || !email || !password) {
@@ -210,13 +272,13 @@ export async function registerRoutes(
         res.json(safeUser);
       });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
-  app.post("/api/auth/login", (req, res, next) => {
+  app.post("/api/auth/login", authLimiter, (req, res, next) => {
     passport.authenticate("local", (err: any, user: any, info: any) => {
-      if (err) return res.status(500).json({ message: err.message });
+      if (err) return res.status(500).json({ message: safeError(err) });
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
       req.login(user, (loginErr) => {
         if (loginErr) return res.status(500).json({ message: "Login failed" });
@@ -256,7 +318,7 @@ export async function registerRoutes(
       const countries = await getCachedCountries();
       res.json(countries);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -269,13 +331,13 @@ export async function registerRoutes(
       );
       res.json(prices);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
   // ========== ORDERS (Proxnum virtual numbers) ==========
 
-  app.post("/api/orders", requireAuth, async (req, res) => {
+  app.post("/api/orders", requireAuth, orderLimiter, async (req, res) => {
     try {
       const user = req.user as any;
       const { serviceId, serviceName, country } = req.body;
@@ -365,7 +427,7 @@ export async function registerRoutes(
       res.json({ ...order, service });
     } catch (err: any) {
       console.error("Order error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -455,7 +517,7 @@ export async function registerRoutes(
       res.json({ status: "pending", messages: [], otpCode: null });
     } catch (err: any) {
       console.error("Check SMS error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -498,7 +560,7 @@ export async function registerRoutes(
 
       res.json({ message: "Order cancelled and refunded" });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -534,7 +596,7 @@ export async function registerRoutes(
       res.json({ message: "Resend requested successfully", activation: newActivation });
     } catch (err: any) {
       console.error("Resend error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -627,7 +689,7 @@ export async function registerRoutes(
       res.json(rental);
     } catch (err: any) {
       console.error("Rental error:", err);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -687,7 +749,7 @@ export async function registerRoutes(
       const messages = await storage.getRentalMessages(rental.id);
       res.json(messages);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -710,7 +772,7 @@ export async function registerRoutes(
       await storage.cancelRental(rental.id);
       res.json({ message: "Rental cancelled" });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 
@@ -752,7 +814,7 @@ export async function registerRoutes(
         createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
       });
       res.json(deposit);
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.get("/api/crypto/deposits", requireAuth, async (req, res) => {
@@ -771,30 +833,7 @@ export async function registerRoutes(
       if (deposit.status !== "pending") return res.status(400).json({ message: "Deposit is not pending" });
       await storage.updateCryptoDeposit(deposit.id, { txHash, status: "confirming" });
       res.json({ message: "Transaction hash submitted. Awaiting confirmation." });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
-  });
-
-  app.post("/api/crypto/:id/simulate-confirm", requireAuth, async (req, res) => {
-    try {
-      const user = req.user as any;
-      const deposit = await storage.getCryptoDeposit(Number(req.params.id));
-      if (!deposit) return res.status(404).json({ message: "Deposit not found" });
-      if (deposit.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
-      if (deposit.status !== "confirming") return res.status(400).json({ message: "Deposit must be in confirming state" });
-      const now = new Date().toISOString();
-      await storage.updateCryptoDeposit(deposit.id, { status: "completed", completedAt: now });
-      const freshUser = await storage.getUser(user.id);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(deposit.amount)).toFixed(2);
-        await storage.updateUserBalance(user.id, newBalance);
-        await storage.createTransaction({
-          userId: user.id, type: "deposit", amount: deposit.amount,
-          description: `Crypto deposit (${deposit.currency}) confirmed`,
-          orderId: null, stripeSessionId: null, createdAt: now,
-        });
-      }
-      res.json({ message: "Deposit confirmed", newBalance: (parseFloat(freshUser!.balance) + parseFloat(deposit.amount)).toFixed(2) });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/admin/crypto/:id/confirm", requireAdmin, async (req, res) => {
@@ -815,7 +854,7 @@ export async function registerRoutes(
         });
       }
       res.json({ message: "Deposit confirmed and balance credited" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.get("/api/admin/crypto/pending", requireAdmin, async (_req, res) => {
@@ -901,7 +940,7 @@ export async function registerRoutes(
     try {
       await storage.updateService(Number(req.params.id), req.body);
       res.json({ message: "Service updated" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.get("/api/admin/settings", requireAdmin, async (_req, res) => {
@@ -937,7 +976,7 @@ export async function registerRoutes(
         }
       }
       res.json({ message: "Settings updated" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/admin/users/:id/add-balance", requireAdmin, async (req, res) => {
@@ -960,7 +999,7 @@ export async function registerRoutes(
         createdAt: new Date().toISOString(),
       });
       res.json({ message: "Balance updated", newBalance });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/admin/crypto/:id/reject", requireAdmin, async (req, res) => {
@@ -970,7 +1009,7 @@ export async function registerRoutes(
       if (deposit.status === "completed") return res.status(400).json({ message: "Cannot reject completed deposit" });
       await storage.updateCryptoDeposit(deposit.id, { status: "rejected", completedAt: new Date().toISOString() });
       res.json({ message: "Deposit rejected" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.get("/api/admin/transactions", requireAdmin, async (_req, res) => {
@@ -983,7 +1022,7 @@ export async function registerRoutes(
       }
       txns.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       res.json(txns.slice(0, 100));
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   // ========== API v1 (API key auth) ==========
@@ -1068,7 +1107,7 @@ export async function registerRoutes(
       });
 
       res.json({ orderId: order.id, phoneNumber: formattedPhone, status: "pending", expiresAt: order.expiresAt });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
   app.get("/api/v1/order/:id", requireApiKey, async (req, res) => {
@@ -1147,7 +1186,7 @@ export async function registerRoutes(
         await storage.updateUserBalance(user.id, newBalance);
       }
       res.json({ message: "Order cancelled and refunded" });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
   app.get("/api/v1/price", requireApiKey, async (req, res) => {
@@ -1159,7 +1198,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: friendlyError(pnResult) });
       }
       res.json(pnResult);
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
   app.post("/api/v1/order/:id/resend", requireApiKey, async (req, res) => {
@@ -1187,7 +1226,7 @@ export async function registerRoutes(
       }
 
       res.json({ message: "Resend requested successfully", activation: newActivation });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
   app.post("/api/v1/rental", requireApiKey, async (req, res) => {
@@ -1243,7 +1282,7 @@ export async function registerRoutes(
       });
 
       res.json({ rentalId: rental.id, phoneNumber: formattedPhone, status: "active", expiresAt: rental.expiresAt });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
   // Profile
@@ -1263,7 +1302,7 @@ export async function registerRoutes(
       const hashed = await bcrypt.hash(newPassword, 10);
       await storage.updateUserPassword(user.id, hashed);
       res.json({ message: "Password updated" });
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   // Proxnum balance endpoint
@@ -1272,7 +1311,7 @@ export async function registerRoutes(
       const result = await proxnumApi.getUserBalance();
       res.json(result.data || result);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: safeError(err) });
     }
   });
 

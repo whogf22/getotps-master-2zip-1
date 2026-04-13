@@ -14,7 +14,7 @@ import { eq, and, desc, or } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 
-const sqlite = new Database("data.db");
+export const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
 
 export const db = drizzle(sqlite);
