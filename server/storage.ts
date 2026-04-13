@@ -150,6 +150,14 @@ async function seedDatabase() {
       role: "admin",
     }).run();
     console.log(`Created admin user: ${adminEmail}`);
+  } else {
+    // Sync admin password with env var on every startup (so Render env var changes take effect)
+    const passwordMatches = await bcrypt.compare(adminPassword, existingAdmin.password);
+    if (!passwordMatches) {
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      db.update(users).set({ password: hashedPassword }).where(eq(users.email, adminEmail)).run();
+      console.log(`Synced admin password from ADMIN_PASSWORD env var`);
+    }
   }
   seedSettings();
 }
