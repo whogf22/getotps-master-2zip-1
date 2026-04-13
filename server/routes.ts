@@ -1336,7 +1336,7 @@ export async function registerRoutes(
     // SEO: robots.txt
   app.get("/robots.txt", (_req, res) => {
     res.type("text/plain");
-    res.send(`User-agent: *\nAllow: /\nSitemap: https://getotps.com/sitemap.xml\nSitemap: https://getotps.online/sitemap.xml`);
+    res.send(`User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /#/dashboard\nDisallow: /#/admin\nDisallow: /#/profile\n\nSitemap: https://getotps.online/sitemap.xml`);
   });
 
   // SEO: sitemap.xml
@@ -1345,17 +1345,18 @@ export async function registerRoutes(
       const services = await getCachedServices();
       const serviceNames = services.map((s: any) => s.name || s);
       let urls = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
-      urls += `  <url><loc>https://getotps.com/</loc><priority>1.0</priority></url>\n`;
-      urls += `  <url><loc>https://getotps.com/buy</loc><priority>0.8</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/</loc><priority>1.0</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/#/login</loc><priority>0.5</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/#/register</loc><priority>0.5</priority></url>\n`;
       for (const svc of serviceNames) {
-        urls += `  <url><loc>https://getotps.com/buy?service=${encodeURIComponent(svc)}</loc><priority>0.6</priority></url>\n`;
+        urls += `  <url><loc>https://getotps.online/buy?service=${encodeURIComponent(svc)}</loc><priority>0.6</priority></url>\n`;
       }
       urls += `</urlset>`;
       res.type("application/xml");
       res.send(urls);
     } catch (err) {
       res.type("application/xml");
-      res.send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://getotps.com/</loc></url></urlset>`);
+      res.send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://getotps.online/</loc></url></urlset>`);
     }
   });
   return httpServer;

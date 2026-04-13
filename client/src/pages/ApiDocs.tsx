@@ -139,34 +139,34 @@ export default function ApiDocs() {
   const apiKey = user?.apiKey || "YOUR_API_KEY";
 
   const curlExample = `# List services
-curl https://getotps.com/api/v1/services
+curl https://getotps.online/api/v1/services
 
 # Check balance
 curl -H "X-API-Key: ${apiKey}" \\
-  https://getotps.com/api/v1/balance
+  https://getotps.online/api/v1/balance
 
 # Buy a number
 curl -X POST \\
   -H "X-API-Key: ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{"service": "whatsapp"}' \\
-  https://getotps.com/api/v1/order
+  https://getotps.online/api/v1/order
 
 # Check for OTP
 curl -H "X-API-Key: ${apiKey}" \\
-  https://getotps.com/api/v1/order/42
+  https://getotps.online/api/v1/order/42
 
 # Create crypto deposit
 curl -X POST \\
   -H "X-API-Key: ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{"currency": "USDT_TRC20", "amount": 25}' \\
-  https://getotps.com/api/crypto/create-deposit`;
+  https://getotps.online/api/crypto/create-deposit`;
 
   const pythonExample = `import requests
 
 API_KEY = "${apiKey}"
-BASE_URL = "https://getotps.com/api/v1"
+BASE_URL = "https://getotps.online/api/v1"
 
 headers = {"X-API-Key": API_KEY}
 
@@ -193,14 +193,14 @@ for _ in range(20):
     time.sleep(10)
 
 # Create crypto deposit
-r = requests.post("https://getotps.com/api/crypto/create-deposit",
+r = requests.post("https://getotps.online/api/crypto/create-deposit",
     headers=headers,
     json={"currency": "USDT_TRC20", "amount": 25})
 deposit = r.json()
 print(f"Send {deposit['cryptoAmount']} to {deposit['walletAddress']}")`;
 
   const nodeExample = `const API_KEY = "${apiKey}";
-const BASE_URL = "https://getotps.com/api/v1";
+const BASE_URL = "https://getotps.online/api/v1";
 
 // Buy a number
 const res = await fetch(\`\${BASE_URL}/order\`, {
@@ -228,7 +228,7 @@ async function pollForOTP(orderId) {
 
 // Create crypto deposit
 const deposit = await fetch(
-  "https://getotps.com/api/crypto/create-deposit",
+  "https://getotps.online/api/crypto/create-deposit",
   {
     method: "POST",
     headers: {

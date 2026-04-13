@@ -134,7 +134,7 @@ function seedSettings() {
 }
 
 async function seedDatabase() {
-  const adminEmail = process.env.ADMIN_EMAIL || "admin@getotps.com";
+  const adminEmail = process.env.ADMIN_EMAIL || "admin@getotps.online";
   const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === "production" ? (() => { throw new Error("ADMIN_PASSWORD must be set in production"); })() : "admin123");
   const adminUsername = process.env.ADMIN_USERNAME || "admin";
   const existingAdmin = db.select().from(users).where(eq(users.email, adminEmail)).get();

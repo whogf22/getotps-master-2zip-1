@@ -104,7 +104,7 @@ function DashboardPanel() {
     <div className="dash-panel">
       <div className="dash-chrome">
         <div className="dash-dots"><span /><span /><span /></div>
-        <div className="dash-url">getotps.com/dashboard</div>
+        <div className="dash-url">getotps.online/dashboard</div>
       </div>
       <div className="dash-header">
         <div className="dash-logo"><div className="dash-logo-dot" /><span>GetOTPs</span><span className="dash-pro">Pro</span></div>
