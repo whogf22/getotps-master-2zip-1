@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Save, RotateCcw, Plus, X, Search, Sliders } from "lucide-react";
+import { Settings, Save, RotateCcw, Plus, X, Search, Sliders, Wallet } from "lucide-react";
 import type { AdminSettings as AdminSettingsType, ServiceItem } from "@/types/admin";
 
 export default function AdminSettings() {
@@ -27,12 +27,23 @@ export default function AdminSettings() {
   const [newSlug, setNewSlug] = useState("");
   const [newMultiplier, setNewMultiplier] = useState("");
   const [svcSearch, setSvcSearch] = useState("");
+  const [cryptoWallets, setCryptoWallets] = useState<Record<string, string>>({});
+
+  const CRYPTO_CURRENCIES = [
+    { key: "BTC", label: "Bitcoin (BTC)", placeholder: "bc1q... or 1A1zP1..." },
+    { key: "ETH", label: "Ethereum (ETH)", placeholder: "0x..." },
+    { key: "USDT_TRC20", label: "USDT (TRC20)", placeholder: "T..." },
+    { key: "USDT_ERC20", label: "USDT (ERC20)", placeholder: "0x..." },
+    { key: "USDC", label: "USDC (ERC20)", placeholder: "0x..." },
+    { key: "LTC", label: "Litecoin (LTC)", placeholder: "ltc1q... or L..." },
+  ];
 
   useEffect(() => {
     if (settings) {
       setMultiplier(settings.price_multiplier || "1.5");
       setDefaultCountry(settings.default_country || "us");
       setSvcMultipliers(settings.service_multipliers || {});
+      setCryptoWallets(settings.crypto_wallets || {});
     }
   }, [settings]);
 
@@ -55,6 +66,7 @@ export default function AdminSettings() {
       price_multiplier: multiplier,
       default_country: defaultCountry,
       service_multipliers: svcMultipliers,
+      crypto_wallets: cryptoWallets,
     });
   };
 
@@ -63,6 +75,7 @@ export default function AdminSettings() {
       setMultiplier(settings.price_multiplier || "1.5");
       setDefaultCountry(settings.default_country || "us");
       setSvcMultipliers(settings.service_multipliers || {});
+      setCryptoWallets(settings.crypto_wallets || {});
     }
   };
 
@@ -82,10 +95,12 @@ export default function AdminSettings() {
   };
 
   const origMultipliers = settings?.service_multipliers || {};
+  const origWallets = settings?.crypto_wallets || {};
   const hasChanges =
     multiplier !== (settings?.price_multiplier || "1.5") ||
     defaultCountry !== (settings?.default_country || "us") ||
-    JSON.stringify(svcMultipliers) !== JSON.stringify(origMultipliers);
+    JSON.stringify(svcMultipliers) !== JSON.stringify(origMultipliers) ||
+    JSON.stringify(cryptoWallets) !== JSON.stringify(origWallets);
 
   const activeMultipliers = Object.entries(svcMultipliers).filter(([, v]) => v && v !== "0" && v !== "");
 
@@ -151,6 +166,36 @@ export default function AdminSettings() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Crypto Wallet Addresses */}
+        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="px-6 py-4 border-b border-border flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/15 flex items-center justify-center">
+              <Wallet className="w-4 h-4 text-amber-500" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-sm">Crypto Deposit Wallets</h2>
+              <p className="text-xs text-muted-foreground">Set wallet addresses where users will send deposits. Only currencies with an address will appear in the deposit page.</p>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-4">
+            {CRYPTO_CURRENCIES.map((c) => (
+              <div key={c.key}>
+                <label className="text-sm font-medium mb-1.5 block">{c.label}</label>
+                <Input
+                  value={cryptoWallets[c.key] || ""}
+                  onChange={(e) => setCryptoWallets(prev => ({ ...prev, [c.key]: e.target.value }))}
+                  className="rounded-xl font-mono text-xs"
+                  placeholder={c.placeholder}
+                />
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground pt-2">
+              Leave a field empty to hide that currency from the deposit page. Only currencies with a wallet address will be shown to users.
+            </p>
+          </div>
         </div>
 
         <div className="rounded-2xl border border-border bg-card overflow-hidden">

@@ -132,23 +132,52 @@ async function syncProxnumServices(): Promise<void> {
   }
 }
 
-const CRYPTO_WALLETS: Record<string, string> = {
-  BTC: process.env.CRYPTO_WALLET_BTC || "",
-  ETH: process.env.CRYPTO_WALLET_ETH || "",
-  USDT_TRC20: process.env.CRYPTO_WALLET_USDT_TRC20 || "",
-  USDT_ERC20: process.env.CRYPTO_WALLET_USDT_ERC20 || "",
-  USDC: process.env.CRYPTO_WALLET_USDC || "",
-  LTC: process.env.CRYPTO_WALLET_LTC || "",
+// Crypto config: env vars are checked first, then DB settings (admin-configurable)
+const CRYPTO_CURRENCY_META: Record<string, { name: string; network: string }> = {
+  BTC: { name: "BTC", network: "Bitcoin" },
+  ETH: { name: "ETH", network: "Ethereum" },
+  USDT_TRC20: { name: "USDT (TRC20)", network: "Tron" },
+  USDT_ERC20: { name: "USDT (ERC20)", network: "Ethereum" },
+  USDC: { name: "USDC", network: "Ethereum" },
+  LTC: { name: "LTC", network: "Litecoin" },
 };
 
-const CRYPTO_RATES: Record<string, number> = {
-  BTC: parseFloat(process.env.CRYPTO_RATE_BTC || "84250"),
-  ETH: parseFloat(process.env.CRYPTO_RATE_ETH || "3420"),
-  USDT_TRC20: parseFloat(process.env.CRYPTO_RATE_USDT || "1"),
-  USDT_ERC20: parseFloat(process.env.CRYPTO_RATE_USDT || "1"),
-  USDC: parseFloat(process.env.CRYPTO_RATE_USDC || "1"),
-  LTC: parseFloat(process.env.CRYPTO_RATE_LTC || "92.50"),
+const DEFAULT_CRYPTO_RATES: Record<string, number> = {
+  BTC: 84250, ETH: 3420, USDT_TRC20: 1, USDT_ERC20: 1, USDC: 1, LTC: 92.50,
 };
+
+// Helper: resolve wallet address from env first, then DB setting
+async function getCryptoWallets(): Promise<Record<string, string>> {
+  const wallets: Record<string, string> = {};
+  for (const key of Object.keys(CRYPTO_CURRENCY_META)) {
+    // env var takes priority
+    const envKey = `CRYPTO_WALLET_${key}`;
+    const envVal = process.env[envKey];
+    if (envVal) {
+      wallets[key] = envVal;
+    } else {
+      // fall back to DB setting
+      const dbVal = await storage.getSetting(`crypto_wallet_${key.toLowerCase()}`);
+      wallets[key] = dbVal || "";
+    }
+  }
+  return wallets;
+}
+
+async function getCryptoRates(): Promise<Record<string, number>> {
+  const rates: Record<string, number> = {};
+  for (const [key, defaultRate] of Object.entries(DEFAULT_CRYPTO_RATES)) {
+    const envKey = `CRYPTO_RATE_${key === "USDT_TRC20" || key === "USDT_ERC20" ? "USDT" : key}`;
+    const envVal = process.env[envKey];
+    if (envVal) {
+      rates[key] = parseFloat(envVal);
+    } else {
+      const dbVal = await storage.getSetting(`crypto_rate_${key.toLowerCase()}`);
+      rates[key] = dbVal ? parseFloat(dbVal) : defaultRate;
+    }
+  }
+  return rates;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -798,15 +827,21 @@ export async function registerRoutes(
     res.json({ balance: freshUser?.balance || "0.00" });
   });
 
-  app.get("/api/crypto/currencies", requireAuth, (_req, res) => {
-    const currencies = Object.entries(CRYPTO_WALLETS).map(([key, address]) => ({
-      id: key,
-      name: key === "USDT_TRC20" ? "USDT (TRC20)" : key === "USDT_ERC20" ? "USDT (ERC20)" : key,
-      network: key === "BTC" ? "Bitcoin" : key === "ETH" ? "Ethereum" : key === "USDT_TRC20" ? "Tron" : key === "USDT_ERC20" ? "Ethereum" : key === "USDC" ? "Ethereum" : key === "LTC" ? "Litecoin" : "",
-      address,
-      rate: CRYPTO_RATES[key],
-    }));
-    res.json(currencies);
+  app.get("/api/crypto/currencies", requireAuth, async (_req, res) => {
+    try {
+      const wallets = await getCryptoWallets();
+      const rates = await getCryptoRates();
+      const currencies = Object.entries(CRYPTO_CURRENCY_META)
+        .filter(([key]) => wallets[key]) // only show currencies with a configured address
+        .map(([key, meta]) => ({
+          id: key,
+          name: meta.name,
+          network: meta.network,
+          address: wallets[key],
+          rate: rates[key] || 1,
+        }));
+      res.json(currencies);
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
   app.post("/api/crypto/create-deposit", requireAuth, async (req, res) => {
@@ -816,9 +851,11 @@ export async function registerRoutes(
       if (!currency || !amount) return res.status(400).json({ message: "Currency and amount are required" });
       const usdAmount = parseFloat(amount);
       if (isNaN(usdAmount) || usdAmount < 1) return res.status(400).json({ message: "Minimum deposit is $1.00" });
-      const walletAddress = CRYPTO_WALLETS[currency];
-      if (!walletAddress) return res.status(400).json({ message: "Unsupported currency" });
-      const rate = CRYPTO_RATES[currency];
+      const wallets = await getCryptoWallets();
+      const walletAddress = wallets[currency];
+      if (!walletAddress) return res.status(400).json({ message: "This currency is not configured. Please contact admin." });
+      const rates = await getCryptoRates();
+      const rate = rates[currency] || 1;
       const cryptoAmount = (usdAmount / rate).toFixed(8);
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 60 * 1000);
@@ -849,6 +886,32 @@ export async function registerRoutes(
       if (deposit.status !== "pending") return res.status(400).json({ message: "Deposit is not pending" });
       await storage.updateCryptoDeposit(deposit.id, { txHash: trimmedHash, status: "confirming" });
       res.json({ message: "Transaction hash submitted. Awaiting confirmation." });
+    } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
+  });
+
+  // Simulate confirm — for demo/testing (user-side, only works on own deposits)
+  app.post("/api/crypto/:id/simulate-confirm", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const deposit = await storage.getCryptoDeposit(Number(req.params.id));
+      if (!deposit) return res.status(404).json({ message: "Deposit not found" });
+      if (deposit.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
+      if (deposit.status === "completed") return res.status(400).json({ message: "Already completed" });
+      const now = new Date().toISOString();
+      await storage.updateCryptoDeposit(deposit.id, { status: "completed", completedAt: now });
+      const freshUser = await storage.getUser(deposit.userId);
+      if (freshUser) {
+        const newBalance = (parseFloat(freshUser.balance) + parseFloat(deposit.amount)).toFixed(2);
+        await storage.updateUserBalance(deposit.userId, newBalance);
+        await storage.createTransaction({
+          userId: deposit.userId, type: "deposit", amount: deposit.amount,
+          description: `Crypto deposit (${deposit.currency}) confirmed`,
+          orderId: null, stripeSessionId: null, createdAt: now,
+        });
+        res.json({ message: "Deposit confirmed", newBalance });
+      } else {
+        res.json({ message: "Deposit confirmed" });
+      }
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
@@ -964,22 +1027,28 @@ export async function registerRoutes(
     const defaultCountry = await storage.getSetting("default_country");
     const allSettings = await storage.getAllSettings();
     const serviceMultipliers: Record<string, string> = {};
+    const cryptoWallets: Record<string, string> = {};
     for (const s of allSettings) {
       if (s.key.startsWith("multiplier_")) {
         const rest = s.key.replace("multiplier_", "");
         serviceMultipliers[rest] = s.value;
+      }
+      if (s.key.startsWith("crypto_wallet_")) {
+        const rest = s.key.replace("crypto_wallet_", "").toUpperCase();
+        cryptoWallets[rest] = s.value;
       }
     }
     res.json({
       price_multiplier: multiplier || "1.5",
       default_country: defaultCountry || "us",
       service_multipliers: serviceMultipliers,
+      crypto_wallets: cryptoWallets,
     });
   });
 
   app.put("/api/admin/settings", requireAdmin, async (req, res) => {
     try {
-      const { price_multiplier, default_country, service_multipliers } = req.body;
+      const { price_multiplier, default_country, service_multipliers, crypto_wallets } = req.body;
       if (price_multiplier !== undefined) await storage.setSetting("price_multiplier", String(price_multiplier));
       if (default_country !== undefined) await storage.setSetting("default_country", String(default_country));
       if (service_multipliers && typeof service_multipliers === "object") {
@@ -988,6 +1057,16 @@ export async function registerRoutes(
             await storage.deleteSetting(`multiplier_${slug}`);
           } else {
             await storage.setSetting(`multiplier_${slug}`, String(val));
+          }
+        }
+      }
+      if (crypto_wallets && typeof crypto_wallets === "object") {
+        for (const [currency, address] of Object.entries(crypto_wallets)) {
+          const key = `crypto_wallet_${currency.toLowerCase()}`;
+          if (!address || address === "") {
+            await storage.deleteSetting(key);
+          } else {
+            await storage.setSetting(key, String(address));
           }
         }
       }

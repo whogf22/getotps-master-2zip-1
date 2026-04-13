@@ -55,6 +55,7 @@ export interface AdminSettings {
   price_multiplier: string;
   default_country: string;
   service_multipliers: Record<string, string>;
+  crypto_wallets?: Record<string, string>;
 }
 
 export interface ServiceItem {

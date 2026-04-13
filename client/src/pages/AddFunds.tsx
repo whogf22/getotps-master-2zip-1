@@ -299,6 +299,12 @@ export default function AddFunds() {
                       <div className="grid grid-cols-3 gap-2">
                         {[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-16" />)}
                       </div>
+                    ) : !currencies || currencies.length === 0 ? (
+                      <div className="text-center py-8">
+                        <AlertCircle className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                        <p className="text-sm font-medium">No payment methods available</p>
+                        <p className="text-xs text-muted-foreground mt-1">Crypto deposit addresses have not been configured yet. Please contact admin.</p>
+                      </div>
                     ) : (
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {currencies?.map(c => (
