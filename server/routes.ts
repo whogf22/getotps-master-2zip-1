@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage, sqlite as sqliteClient } from "./storage";
 import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
+import { extractOTPFromText, safeError, SERVICE_CATEGORIES } from "./utils";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -14,21 +15,6 @@ declare module "express-session" {
     userId?: number;
   }
 }
-
-const SERVICE_CATEGORIES: Record<string, string> = {
-  WhatsApp: "Messaging", Whatsapp: "Messaging", Telegram: "Messaging", Discord: "Messaging", Signal: "Messaging",
-  Viber: "Messaging", LINE: "Messaging", WeChat: "Messaging", KakaoTalk: "Messaging",
-  Google: "Tech", Microsoft: "Tech", Apple: "Tech", AWS: "Tech", GitHub: "Tech", Anthropic: "Tech",
-  Facebook: "Social", Instagram: "Social", Twitter: "Social", TikTok: "Social",
-  Snapchat: "Social", LinkedIn: "Social", Reddit: "Social", Pinterest: "Social",
-  Amazon: "Shopping", eBay: "Shopping", Walmart: "Shopping", BestBuy: "Shopping",
-  Uber: "Transport", Lyft: "Transport", DoorDash: "Food", Grubhub: "Food", UberEats: "Food",
-  Airbnb: "Travel", Booking: "Travel",
-  PayPal: "Finance", CashApp: "Finance", Venmo: "Finance", Chime: "Finance", Zelle: "Finance",
-  Coinbase: "Crypto", Binance: "Crypto", Kraken: "Crypto",
-  Netflix: "Entertainment", Spotify: "Entertainment", Hulu: "Entertainment", Disney: "Entertainment",
-  Bumble: "Dating", Tinder: "Dating", Hinge: "Dating", Badoo: "Dating",
-};
 
 async function getMarkupMultiplier(): Promise<number> {
   const val = await storage.getSetting("price_multiplier");
@@ -47,30 +33,6 @@ async function calculatePrice(basePrice: number, service: string, country: strin
   const globalMult = await getMarkupMultiplier();
   const serviceMult = await getServiceMultiplier(service, country);
   return basePrice * globalMult * serviceMult;
-}
-
-function extractOTPFromText(text: string): string | null {
-  const patterns = [
-    /\b(\d{6})\b/,
-    /\b(\d{4})\b/,
-    /\b(\d{5})\b/,
-    /\b(\d{7,8})\b/,
-    /code[:\s]+(\d{4,8})/i,
-    /pin[:\s]+(\d{4,8})/i,
-    /verification[:\s]+(\d{4,8})/i,
-  ];
-  for (const p of patterns) {
-    const match = text.match(p);
-    if (match) return match[1];
-  }
-  return null;
-}
-
-function safeError(err: any): string {
-  if (process.env.NODE_ENV === "production") {
-    return "Something went wrong. Please try again.";
-  }
-  return err?.message || "Unknown error";
 }
 
 async function syncProxnumServices(): Promise<void> {
