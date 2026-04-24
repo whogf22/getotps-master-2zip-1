@@ -17,6 +17,9 @@ import History from "@/pages/History";
 import AddFunds from "@/pages/AddFunds";
 import ApiDocs from "@/pages/ApiDocs";
 import Profile from "@/pages/Profile";
+import PrivacyPolicy from "@/pages/PrivacyPolicy";
+import TermsOfService from "@/pages/TermsOfService";
+import RefundPolicy from "@/pages/RefundPolicy";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminUsers from "@/pages/AdminUsers";
 import AdminDeposits from "@/pages/AdminDeposits";
@@ -85,6 +88,9 @@ function AppRouter() {
       <Route path="/" component={Landing} />
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/privacy" component={PrivacyPolicy} />
+      <Route path="/terms" component={TermsOfService} />
+      <Route path="/refund" component={RefundPolicy} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/buy" component={() => <ProtectedRoute component={BuyNumber} />} />
       <Route path="/active" component={() => <ProtectedRoute component={ActiveNumbers} />} />

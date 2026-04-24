@@ -1,4 +1,4 @@
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { Logo } from "@/components/Logo";
@@ -181,6 +181,7 @@ function DashboardPanel() {
 
 export default function Landing() {
   const { user } = useAuth();
+  const [, navigate] = useLocation();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const [mx, setMx] = useState(0);
@@ -495,7 +496,12 @@ export default function Landing() {
             <div><Logo size={26} /><p className="l-footer-desc">Virtual numbers for OTP verification & number rental worldwide.</p></div>
             <div><p className="l-footer-heading">Product</p>{[["Receive OTP", "platforms"], ["Rent Number", "platforms"], ["API", "how-it-works"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
             <div><p className="l-footer-heading">Resources</p>{[["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
-            <div><p className="l-footer-heading">Legal</p>{["Privacy Policy", "Terms of Service", "Refund Policy"].map(l => <a key={l} href="#" className="l-footer-link">{l}</a>)}</div>
+            <div>
+              <p className="l-footer-heading">Legal</p>
+              <button onClick={() => navigate("/privacy")} className="l-footer-link">Privacy Policy</button>
+              <button onClick={() => navigate("/terms")} className="l-footer-link">Terms of Service</button>
+              <button onClick={() => navigate("/refund")} className="l-footer-link">Refund Policy</button>
+            </div>
           </div>
           <div className="l-footer-bottom">
             <p>&copy; {new Date().getFullYear()} GetOTPs. All rights reserved.</p>
