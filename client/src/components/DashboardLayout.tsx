@@ -50,7 +50,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
 
   const handleLogout = async () => {
     await logout();

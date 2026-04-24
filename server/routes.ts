@@ -1,6 +1,5 @@
 import type { Express, Request, Response } from "express";
 import path from "path";
-import { fileURLToPath } from "url";
 import { createServer, type Server } from "http";
 import { storage, sqlite as sqliteClient } from "./storage";
 import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
@@ -185,9 +184,6 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-
   // SQLite-backed session store (no memory leaks)
   const SqliteStore = BetterSqlite3SessionStore(session);
   
@@ -1452,7 +1448,7 @@ export async function registerRoutes(
       return next();
     }
 
-    const indexPath = path.resolve(__dirname, "..", "dist", "public", "index.html");
+    const indexPath = path.resolve(process.cwd(), "dist", "public", "index.html");
     return res.sendFile(indexPath, (err) => {
       if (err) {
         next(err);
