@@ -1,0 +1,20 @@
+name: Keepalive Health Check
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping-healthz:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /healthz
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          if [ -z "$HEALTHCHECK_URL" ]; then
+            echo "HEALTHCHECK_URL secret is not configured."
+            exit 1
+          fi
+          curl --fail --silent --show-error "$HEALTHCHECK_URL/healthz" > /dev/null

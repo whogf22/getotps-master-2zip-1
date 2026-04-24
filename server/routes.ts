@@ -1145,6 +1145,47 @@ export async function registerRoutes(
     res.json({ services: allServices });
   });
 
+  app.get("/healthz", async (_req, res) => {
+    try {
+      const startedAt = Date.now();
+      const activeServiceCount = (await storage.getAllServices()).length;
+      const latencyMs = Date.now() - startedAt;
+      const timestamp = new Date().toISOString();
+
+      await storage.createUptimeLog({
+        status: "ok",
+        responseMs: latencyMs,
+        source: "healthz",
+        detail: "ok",
+        checkedAt: timestamp,
+      });
+
+      res.json({
+        status: "ok",
+        service: "getotps",
+        timestamp,
+        latencyMs,
+        activeServiceCount,
+      });
+    } catch (err: any) {
+      const timestamp = new Date().toISOString();
+      await storage.createUptimeLog({
+        status: "error",
+        responseMs: -1,
+        source: "healthz",
+        detail: safeError(err),
+        checkedAt: timestamp,
+      });
+
+      res.status(500).json({
+        status: "error",
+        service: "getotps",
+        timestamp,
+        message: safeError(err),
+      });
+    }
+  });
+
   app.get("/api/v1/balance", requireApiKey, async (req, res) => {
     const user = (req as any).apiUser;
     res.json({ balance: user.balance });

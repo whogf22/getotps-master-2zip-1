@@ -91,6 +91,19 @@ export const settings = sqliteTable("settings", {
 
 export type Setting = typeof settings.$inferSelect;
 
+export const uptimeLogs = sqliteTable("uptime_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  status: text("status").notNull(),
+  statusCode: integer("status_code").notNull(),
+  latencyMs: integer("latency_ms"),
+  source: text("source").notNull().default("healthz"),
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertUptimeLogSchema = createInsertSchema(uptimeLogs).omit({ id: true });
+export type InsertUptimeLog = z.infer<typeof insertUptimeLogSchema>;
+export type UptimeLog = typeof uptimeLogs.$inferSelect;
+
 export const transactions = sqliteTable("transactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),
