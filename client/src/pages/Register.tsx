@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Logo } from "@/components/Logo";
@@ -18,7 +18,6 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const [, navigate] = useLocation();
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -34,7 +33,7 @@ export default function Register() {
     setLoading(true);
     try {
       await register(username, email, password);
-      window.location.hash = "/dashboard";
+      window.location.assign("/dashboard");
     } catch (err: any) {
       toast({ title: "Registration failed", description: err.message || "Something went wrong", variant: "destructive" });
     } finally {

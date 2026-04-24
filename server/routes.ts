@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 import { createServer, type Server } from "http";
 import { storage, sqlite as sqliteClient } from "./storage";
 import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
@@ -183,6 +185,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
 
   // SQLite-backed session store (no memory leaks)
   const SqliteStore = BetterSqlite3SessionStore(session);
@@ -1443,5 +1447,18 @@ export async function registerRoutes(
       res.send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://getotps.online/</loc></url></urlset>`);
     }
   });
+  app.get(/^(?!\/api(?:\/|$)).*/, (_req, res, next) => {
+    if (process.env.NODE_ENV !== "production") {
+      return next();
+    }
+
+    const indexPath = path.resolve(__dirname, "..", "dist", "public", "index.html");
+    return res.sendFile(indexPath, (err) => {
+      if (err) {
+        next(err);
+      }
+    });
+  });
+
   return httpServer;
 }

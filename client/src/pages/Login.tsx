@@ -27,7 +27,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      window.location.hash = "/dashboard";
+      window.location.assign("/dashboard");
     } catch (err: any) {
       toast({ title: "Login failed", description: err.message || "Invalid credentials", variant: "destructive" });
     } finally {

@@ -54,7 +54,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const handleLogout = async () => {
     await logout();
-    window.location.hash = "/";
+    navigate("/");
   };
 
   const SidebarContent = () => (

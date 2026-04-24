@@ -1,5 +1,5 @@
-import { Switch, Route, Router } from "wouter";
-import { useHashLocation } from "wouter/use-hash-location";
+import { useEffect } from "react";
+import { Switch, Route, Router, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -25,6 +25,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { user, isLoading } = useAuth();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && !user) {
+      navigate("/login");
+    }
+  }, [isLoading, navigate, user]);
 
   if (isLoading) {
     return (
@@ -37,16 +44,24 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
     );
   }
 
-  if (!user) {
-    window.location.hash = "/login";
-    return null;
-  }
+  if (!user) return null;
 
   return <Component />;
 }
 
 function AdminRoute({ component: Component }: { component: React.ComponentType }) {
   const { user, isLoading } = useAuth();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && !user) {
+      navigate("/login");
+      return;
+    }
+    if (!isLoading && user?.role !== "admin") {
+      navigate("/dashboard");
+    }
+  }, [isLoading, navigate, user]);
 
   if (isLoading) {
     return (
@@ -59,15 +74,7 @@ function AdminRoute({ component: Component }: { component: React.ComponentType }
     );
   }
 
-  if (!user) {
-    window.location.hash = "/login";
-    return null;
-  }
-
-  if (user.role !== "admin") {
-    window.location.hash = "/dashboard";
-    return null;
-  }
+  if (!user || user.role !== "admin") return null;
 
   return <Component />;
 }
@@ -101,7 +108,7 @@ function App() {
         <AuthProvider>
           <TooltipProvider>
             <Toaster />
-            <Router hook={useHashLocation}>
+            <Router>
               <AppRouter />
             </Router>
           </TooltipProvider>
