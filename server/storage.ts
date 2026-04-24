@@ -133,6 +133,30 @@ function seedSettings() {
   }
 }
 
+function seedSampleServicesIfEmpty() {
+  const existingCountRow = sqlite.prepare("SELECT COUNT(*) as count FROM services").get() as { count: number };
+  if (existingCountRow.count > 0) {
+    return;
+  }
+
+  const sampleServices: Array<InsertService> = [
+    { name: "WhatsApp", slug: "whatsapp", price: "0.79", icon: null, category: "Messaging", isActive: 1 },
+    { name: "Telegram", slug: "telegram", price: "0.59", icon: null, category: "Messaging", isActive: 1 },
+    { name: "Google", slug: "google", price: "0.69", icon: null, category: "Tech", isActive: 1 },
+    { name: "TikTok", slug: "tiktok", price: "0.89", icon: null, category: "Social", isActive: 1 },
+    { name: "Binance", slug: "binance", price: "1.19", icon: null, category: "Crypto", isActive: 1 },
+    { name: "Discord", slug: "discord", price: "0.65", icon: null, category: "Messaging", isActive: 1 },
+    { name: "Instagram", slug: "instagram", price: "0.74", icon: null, category: "Social", isActive: 1 },
+    { name: "Facebook", slug: "facebook", price: "0.72", icon: null, category: "Social", isActive: 1 },
+    { name: "Uber", slug: "uber", price: "0.99", icon: null, category: "Transport", isActive: 1 },
+    { name: "Amazon", slug: "amazon", price: "0.84", icon: null, category: "Shopping", isActive: 1 },
+  ];
+
+  for (const service of sampleServices) {
+    db.insert(services).values(service).run();
+  }
+}
+
 async function seedDatabase() {
   const adminEmail = process.env.ADMIN_EMAIL || "admin@getotps.online";
   const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === "production" ? (() => { throw new Error("ADMIN_PASSWORD must be set in production"); })() : "admin123");
@@ -160,6 +184,7 @@ async function seedDatabase() {
     }
   }
   seedSettings();
+  seedSampleServicesIfEmpty();
 }
 
 seedDatabase().catch(console.error);
@@ -176,6 +201,7 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
 
   getAllServices(): Promise<Service[]>;
+  getPricingTable(limit?: number): Promise<Service[]>;
   getService(id: number): Promise<Service | undefined>;
   getServiceBySlug(slug: string): Promise<Service | undefined>;
   getServiceByName(name: string): Promise<Service | undefined>;
@@ -264,6 +290,15 @@ export class DatabaseStorage implements IStorage {
 
   async getAllServices(): Promise<Service[]> {
     return db.select().from(services).where(eq(services.isActive, 1)).all();
+  }
+
+  async getPricingTable(limit = 50): Promise<Service[]> {
+    return db.select()
+      .from(services)
+      .where(eq(services.isActive, 1))
+      .orderBy(services.price, services.name)
+      .limit(limit)
+      .all();
   }
 
   async getService(id: number): Promise<Service | undefined> {

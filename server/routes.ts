@@ -356,6 +356,15 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/pricing", async (_req, res) => {
+    try {
+      const pricingRows = await storage.getPricingTable();
+      res.json(pricingRows);
+    } catch (err: any) {
+      res.status(500).json({ message: safeError(err) });
+    }
+  });
+
   app.get("/api/countries", async (_req, res) => {
     try {
       const countries = await getCachedCountries();

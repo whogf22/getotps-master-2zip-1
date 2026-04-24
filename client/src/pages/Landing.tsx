@@ -182,6 +182,7 @@ function DashboardPanel() {
 export default function Landing() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
+  const { data: services } = useQuery<any[]>({ queryKey: ["/api/services"] });
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const [mx, setMx] = useState(0);
@@ -203,8 +204,19 @@ export default function Landing() {
   }, []);
 
   const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-  const { data: services } = useQuery<any[]>({ queryKey: ["/api/services"] });
   const plats = services?.length ? services.slice(0, 16) : PLATFORMS;
+  const topPricing = useMemo(() => {
+    if (!services || services.length === 0) return [];
+    return [...services]
+      .sort((a, b) => Number(a.price) - Number(b.price))
+      .slice(0, 6)
+      .map((service) => ({
+        id: service.id,
+        name: service.name,
+        price: Number(service.price).toFixed(2),
+        category: service.category || "General",
+      }));
+  }, [services]);
 
   return (
     <div className="landing">
@@ -350,6 +362,38 @@ export default function Landing() {
             ))}
           </div>
           <Reveal><div className="text-center"><Link href="/register"><button className="l-btn-outline">Browse All 500+ Services <ArrowRight className="w-4 h-4" /></button></Link></div></Reveal>
+        </div>
+      </section>
+
+      {/* ════════ PRICING ════════ */}
+      <section className="l-section">
+        <div className="l-container">
+          <Reveal>
+            <div className="l-section-head">
+              <span className="l-eyebrow">Pricing</span>
+              <h2 className="l-h2">Transparent Pay-As-You-Go Rates</h2>
+              <p className="l-h2-sub">Live service rates from our current inventory. No subscription required.</p>
+            </div>
+          </Reveal>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 mb-8">
+            {topPricing.map((service, index) => (
+              <Reveal key={service.id} delay={index * 50}>
+                <GlowCard className="p-5">
+                  <p className="text-xs text-cyan-300/70 uppercase tracking-wide mb-1">{service.category}</p>
+                  <h3 className="text-lg font-semibold text-white">{service.name}</h3>
+                  <p className="text-sm text-white/35 mt-1">Starting from</p>
+                  <p className="text-2xl font-bold text-cyan-300 mt-2">${service.price}</p>
+                </GlowCard>
+              </Reveal>
+            ))}
+          </div>
+          <Reveal>
+            <div className="text-center">
+              <button className="l-btn-primary" onClick={() => navigate("/pricing")}>
+                View full pricing table <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </Reveal>
         </div>
       </section>
 
