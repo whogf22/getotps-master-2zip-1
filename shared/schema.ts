@@ -97,7 +97,7 @@ export const uptimeLogs = sqliteTable("uptime_logs", {
   statusCode: integer("status_code").notNull(),
   latencyMs: integer("latency_ms"),
   source: text("source").notNull().default("healthz"),
-  createdAt: text("created_at").notNull(),
+  checkedAt: text("checked_at").notNull(),
 });
 
 export const insertUptimeLogSchema = createInsertSchema(uptimeLogs).omit({ id: true });

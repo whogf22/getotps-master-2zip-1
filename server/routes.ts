@@ -1154,9 +1154,9 @@ export async function registerRoutes(
 
       await storage.createUptimeLog({
         status: "ok",
-        responseMs: latencyMs,
+        statusCode: 200,
+        latencyMs,
         source: "healthz",
-        detail: "ok",
         checkedAt: timestamp,
       });
 
@@ -1171,9 +1171,9 @@ export async function registerRoutes(
       const timestamp = new Date().toISOString();
       await storage.createUptimeLog({
         status: "error",
-        responseMs: -1,
+        statusCode: 500,
+        latencyMs: -1,
         source: "healthz",
-        detail: safeError(err),
         checkedAt: timestamp,
       });
 
