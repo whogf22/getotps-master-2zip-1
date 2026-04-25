@@ -2,8 +2,8 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
+// Bundle these into the server output. All other deps stay external
+// (loaded from node_modules at runtime). Native modules MUST stay external.
 const allowlist = [
   "@google/generative-ai",
   "axios",
@@ -28,6 +28,15 @@ const allowlist = [
   "xlsx",
   "zod",
   "zod-validation-error",
+  "helmet",
+  "dotenv",
+  "bcryptjs",
+];
+
+// Native bindings: never bundle
+const forceExternal = [
+  "better-sqlite3",
+  "better-sqlite3-session-store",
 ];
 
 async function buildAll() {
@@ -42,7 +51,12 @@ async function buildAll() {
     ...Object.keys(pkg.dependencies || {}),
     ...Object.keys(pkg.devDependencies || {}),
   ];
-  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  const externals = Array.from(
+    new Set([
+      ...allDeps.filter((dep) => !allowlist.includes(dep)),
+      ...forceExternal,
+    ])
+  );
 
   await esbuild({
     entryPoints: ["server/index.ts"],
@@ -56,6 +70,9 @@ async function buildAll() {
     minify: true,
     external: externals,
     logLevel: "info",
+    banner: {
+      js: "const { createRequire: __cr } = require('module'); const require2 = __cr(__filename);",
+    },
   });
 }
 
