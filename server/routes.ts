@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage, sqlite as sqliteClient } from "./storage";
@@ -12,6 +13,7 @@ import BetterSqlite3SessionStore from "better-sqlite3-session-store";
 declare module "express-session" {
   interface SessionData {
     userId?: number;
+    csrfToken?: string;
   }
 }
 
@@ -71,6 +73,25 @@ function safeError(err: any): string {
     return "Something went wrong. Please try again.";
   }
   return err?.message || "Unknown error";
+}
+
+const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const CSRF_EXEMPT_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/logout",
+  "/api/contact",
+  "/api/v1/webhooks/proxnum",
+]);
+
+function isCsrfExempt(path: string): boolean {
+  if (CSRF_EXEMPT_PATHS.has(path)) return true;
+  return path.startsWith("/api/v1/webhooks/");
+}
+
+function normalizeCsrfToken(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] || "";
+  return value || "";
 }
 
 async function syncProxnumServices(): Promise<void> {
@@ -221,6 +242,38 @@ export async function registerRoutes(
 
   app.use(passport.initialize());
   app.use(passport.session());
+
+  app.use((req, res, next) => {
+    if (!req.session.csrfToken) {
+      req.session.csrfToken = crypto.randomBytes(32).toString("hex");
+    }
+
+    res.setHeader("x-csrf-token", req.session.csrfToken);
+    next();
+  });
+
+  app.use((req, res, next) => {
+    if (CSRF_SAFE_METHODS.has(req.method)) {
+      return next();
+    }
+
+    if (isCsrfExempt(req.path)) {
+      return next();
+    }
+
+    const providedToken = normalizeCsrfToken(
+      req.headers["x-csrf-token"] ||
+      req.headers["csrf-token"] ||
+      (req.body && req.body._csrf),
+    );
+
+    const expectedToken = req.session.csrfToken;
+    if (!expectedToken || providedToken !== expectedToken) {
+      return res.status(403).json({ message: "Invalid CSRF token" });
+    }
+
+    next();
+  });
 
   passport.use(
     new LocalStrategy({ usernameField: "email" }, async (email, password, done) => {

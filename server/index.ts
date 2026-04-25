@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -7,6 +8,18 @@ import { createServer } from "http";
 
 const app = express();
 const httpServer = createServer(app);
+const isProduction = process.env.NODE_ENV === "production";
+
+const allowedOrigins = new Set(
+  [
+    process.env.APP_BASE_URL,
+    ...(process.env.CORS_ALLOWLIST ?? "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+    ...(isProduction ? [] : ["http://localhost:5000", "http://127.0.0.1:5000", "http://localhost:5173", "http://127.0.0.1:5173"]),
+  ].filter(Boolean),
+);
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -33,6 +46,20 @@ app.use((_req, res, next) => {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
   next();
 });
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "X-API-Key", "X-CSRF-Token"],
+    exposedHeaders: ["X-CSRF-Token"],
+  }),
+);
 
 declare module "http" {
   interface IncomingMessage {
