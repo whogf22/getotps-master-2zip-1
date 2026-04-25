@@ -74,6 +74,32 @@ function safeError(err: any): string {
   return err?.message || "Unknown error";
 }
 
+const COUNTRY_NAMES: Record<string, string> = {
+  us: "United States",
+  gb: "United Kingdom",
+  ca: "Canada",
+  au: "Australia",
+  de: "Germany",
+  fr: "France",
+  in: "India",
+  br: "Brazil",
+  tr: "Turkey",
+  id: "Indonesia",
+};
+
+const COUNTRY_FLAGS: Record<string, string> = {
+  us: "🇺🇸",
+  gb: "🇬🇧",
+  ca: "🇨🇦",
+  au: "🇦🇺",
+  de: "🇩🇪",
+  fr: "🇫🇷",
+  in: "🇮🇳",
+  br: "🇧🇷",
+  tr: "🇹🇷",
+  id: "🇮🇩",
+};
+
 async function verifyHCaptchaToken(token: string | undefined, remoteIp?: string): Promise<{ ok: true } | { ok: false; message: string }> {
   const secret = process.env.HCAPTCHA_SECRET;
   if (!secret) {
@@ -434,6 +460,50 @@ export async function registerRoutes(
       res.json(prices);
     } catch (err: any) {
       res.status(500).json({ message: safeError(err) });
+    }
+  });
+
+  app.get("/api/country-stock", async (_req, res) => {
+    try {
+      const pricesByCountry = await getCachedPrices();
+      const rows = Object.entries(pricesByCountry)
+        .filter(([, serviceMap]) => typeof serviceMap === "object" && serviceMap !== null)
+        .map(([countryCode, serviceMap]) => {
+          const values = Object.values(serviceMap as Record<string, any>);
+          const stock = values.reduce((sum, value) => sum + Number(value?.available || 0), 0);
+          const code = countryCode.toLowerCase();
+          return {
+            code,
+            name: COUNTRY_NAMES[code] || code.toUpperCase(),
+            flag: COUNTRY_FLAGS[code] || "🌍",
+            stock,
+          };
+        })
+        .sort((a, b) => b.stock - a.stock)
+        .slice(0, 6);
+
+      if (rows.length > 0) {
+        return res.json(rows);
+      }
+
+      // Safe fallback when provider returns no inventory.
+      return res.json([
+        { code: "us", name: "United States", flag: "🇺🇸", stock: 0 },
+        { code: "gb", name: "United Kingdom", flag: "🇬🇧", stock: 0 },
+        { code: "ca", name: "Canada", flag: "🇨🇦", stock: 0 },
+        { code: "au", name: "Australia", flag: "🇦🇺", stock: 0 },
+        { code: "de", name: "Germany", flag: "🇩🇪", stock: 0 },
+        { code: "fr", name: "France", flag: "🇫🇷", stock: 0 },
+      ]);
+    } catch {
+      return res.json([
+        { code: "us", name: "United States", flag: "🇺🇸", stock: 0 },
+        { code: "gb", name: "United Kingdom", flag: "🇬🇧", stock: 0 },
+        { code: "ca", name: "Canada", flag: "🇨🇦", stock: 0 },
+        { code: "au", name: "Australia", flag: "🇦🇺", stock: 0 },
+        { code: "de", name: "Germany", flag: "🇩🇪", stock: 0 },
+        { code: "fr", name: "France", flag: "🇫🇷", stock: 0 },
+      ]);
     }
   });
 

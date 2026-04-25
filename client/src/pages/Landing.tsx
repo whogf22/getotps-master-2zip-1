@@ -77,12 +77,12 @@ const PLATFORMS = [
 ];
 
 const COUNTRIES = [
-  { flag: "🇺🇸", name: "United States", code: "+1", stock: 500 },
-  { flag: "🇬🇧", name: "United Kingdom", code: "+44", stock: 120 },
-  { flag: "🇨🇦", name: "Canada", code: "+1", stock: 95 },
-  { flag: "🇦🇺", name: "Australia", code: "+61", stock: 80 },
-  { flag: "🇩🇪", name: "Germany", code: "+49", stock: 75 },
-  { flag: "🇫🇷", name: "France", code: "+33", stock: 60 },
+  { code: "us", flag: "🇺🇸", name: "United States", dialCode: "+1" },
+  { code: "gb", flag: "🇬🇧", name: "United Kingdom", dialCode: "+44" },
+  { code: "ca", flag: "🇨🇦", name: "Canada", dialCode: "+1" },
+  { code: "au", flag: "🇦🇺", name: "Australia", dialCode: "+61" },
+  { code: "de", flag: "🇩🇪", name: "Germany", dialCode: "+49" },
+  { code: "fr", flag: "🇫🇷", name: "France", dialCode: "+33" },
 ];
 
 const FAQS = [
@@ -217,6 +217,9 @@ export default function Landing() {
         category: service.category || "General",
       }));
   }, [services]);
+  const { data: countryStockMap = {} } = useQuery<Record<string, number>>({
+    queryKey: ["/api/country-stock"],
+  });
 
   return (
     <div className="landing">
@@ -407,8 +410,15 @@ export default function Landing() {
               <Reveal key={c.name} delay={i * 60}>
                 <GlowCard className="l-country">
                   <div className="l-country-flag">{c.flag}</div>
-                  <div className="l-country-info"><div className="l-country-name">{c.name}</div><div className="l-country-code">{c.code}</div></div>
-                  <div className="l-country-stock"><div className="l-country-num">{c.stock}</div><div className="l-country-label">in stock</div></div>
+                  <div className="l-country-info"><div className="l-country-name">{c.name}</div><div className="l-country-code">{c.dialCode}</div></div>
+                  <div className="l-country-stock">
+                    <div className="l-country-num">
+                      {(countryStockMap[c.code] ?? 0) > 0 ? countryStockMap[c.code] : "Live"}
+                    </div>
+                    <div className="l-country-label">
+                      {(countryStockMap[c.code] ?? 0) > 0 ? "in stock" : "availability"}
+                    </div>
+                  </div>
                   <div className="l-country-live" />
                 </GlowCard>
               </Reveal>
