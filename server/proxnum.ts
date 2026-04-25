@@ -1,5 +1,13 @@
 const PROXNUM_API_URL = "https://proxnum.com/api/v1";
 const PROXNUM_API_KEY = process.env.PROXNUM_API_KEY || "";
+if (!PROXNUM_API_KEY) {
+  const msg = "PROXNUM_API_KEY is not set \u2014 virtual number purchases will fail.";
+  if (process.env.NODE_ENV === "production") {
+    console.error(`FATAL: ${msg}`);
+  } else {
+    console.warn(`WARNING: ${msg}`);
+  }
+}
 
 interface ProxnumResponse {
   success?: boolean;
