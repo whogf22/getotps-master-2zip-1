@@ -95,3 +95,24 @@ export async function sendPasswordResetEmail(args: { email: string; username: st
     `,
   });
 }
+
+type TransactionalEmailPayload =
+  | { type: "email-verification"; email: string; username: string; token: string }
+  | { type: "password-reset"; email: string; username: string; token: string };
+
+export async function sendTransactionalEmail(payload: TransactionalEmailPayload): Promise<void> {
+  if (payload.type === "email-verification") {
+    await sendVerificationEmail({
+      email: payload.email,
+      username: payload.username,
+      token: payload.token,
+    });
+    return;
+  }
+
+  await sendPasswordResetEmail({
+    email: payload.email,
+    username: payload.username,
+    token: payload.token,
+  });
+}
