@@ -1,5 +1,4 @@
 import { Switch, Route, Router } from "wouter";
-import { useHashLocation } from "wouter/use-hash-location";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -16,6 +15,7 @@ import ActiveNumbers from "@/pages/ActiveNumbers";
 import History from "@/pages/History";
 import AddFunds from "@/pages/AddFunds";
 import ApiDocs from "@/pages/ApiDocs";
+import Status from "@/pages/Status";
 import Profile from "@/pages/Profile";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminUsers from "@/pages/AdminUsers";
@@ -38,7 +38,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   }
 
   if (!user) {
-    window.location.hash = "/login";
+    window.location.assign("/login");
     return null;
   }
 
@@ -60,12 +60,12 @@ function AdminRoute({ component: Component }: { component: React.ComponentType }
   }
 
   if (!user) {
-    window.location.hash = "/login";
+    window.location.assign("/login");
     return null;
   }
 
   if (user.role !== "admin") {
-    window.location.hash = "/dashboard";
+    window.location.assign("/dashboard");
     return null;
   }
 
@@ -84,6 +84,7 @@ function AppRouter() {
       <Route path="/history" component={() => <ProtectedRoute component={History} />} />
       <Route path="/funds" component={() => <ProtectedRoute component={AddFunds} />} />
       <Route path="/api-docs" component={() => <ProtectedRoute component={ApiDocs} />} />
+      <Route path="/status" component={Status} />
       <Route path="/profile" component={() => <ProtectedRoute component={Profile} />} />
       <Route path="/admin" component={() => <AdminRoute component={AdminDashboard} />} />
       <Route path="/admin/users" component={() => <AdminRoute component={AdminUsers} />} />
@@ -101,7 +102,7 @@ function App() {
         <AuthProvider>
           <TooltipProvider>
             <Toaster />
-            <Router hook={useHashLocation}>
+            <Router>
               <AppRouter />
             </Router>
           </TooltipProvider>

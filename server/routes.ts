@@ -1410,6 +1410,81 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/healthz", async (_req, res) => {
+    const startedAt = Date.now();
+    const checkedAt = new Date().toISOString();
+
+    try {
+      const latencyMs = Date.now() - startedAt;
+      await storage.createUptimeLog({
+        status: "up",
+        statusCode: 200,
+        latencyMs,
+        source: "healthz",
+        checkedAt,
+      });
+
+      res.status(200).json({
+        status: "up",
+        statusCode: 200,
+        checkedAt,
+        latencyMs,
+      });
+    } catch (err) {
+      const latencyMs = Date.now() - startedAt;
+      console.error("healthz failed to write uptime log:", err);
+      res.status(200).json({
+        status: "up",
+        statusCode: 200,
+        checkedAt,
+        latencyMs,
+      });
+    }
+  });
+
+  app.get("/api/status", async (_req, res) => {
+    try {
+      const history = await storage.getRecentUptimeLogs(100);
+      const now = Date.now();
+      const oneDayAgo = now - 24 * 60 * 60 * 1000;
+      const recent = history.filter((log) => new Date(log.checkedAt).getTime() >= oneDayAgo);
+      const latencySamples = recent
+        .map((log) => log.latencyMs)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+      const upChecks = recent.filter((log) => log.status === "up").length;
+      const uptimePercent = recent.length > 0 ? (upChecks / recent.length) * 100 : 100;
+
+      const current = history[0] ?? {
+        status: "up",
+        statusCode: 200,
+        checkedAt: new Date().toISOString(),
+        latencyMs: null,
+      };
+
+      res.json({
+        current: {
+          status: current.status,
+          statusCode: current.statusCode,
+          checkedAt: current.checkedAt,
+          latencyMs: current.latencyMs ?? null,
+        },
+        summary: {
+          last24h: {
+            totalChecks: recent.length,
+            upChecks,
+            uptimePercent,
+            avgLatencyMs: latencySamples.length
+              ? latencySamples.reduce((acc, value) => acc + value, 0) / latencySamples.length
+              : null,
+          },
+        },
+        history: history.slice(0, 50),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: safeError(err) });
+    }
+  });
+
   syncProxnumServices().then(() => {
     console.log("Proxnum services synced on startup");
   }).catch(err => {

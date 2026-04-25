@@ -7,6 +7,7 @@ import {
   type Setting, settings,
   type Transaction, type InsertTransaction, transactions,
   type CryptoDeposit, type InsertCryptoDeposit, cryptoDeposits,
+  type UptimeLog, type InsertUptimeLog, uptimeLogs,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -110,6 +111,15 @@ sqlite.exec(`
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     completed_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS uptime_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    latency_ms INTEGER,
+    source TEXT,
+    checked_at TEXT NOT NULL
   );
 `);
 
@@ -220,6 +230,9 @@ export interface IStorage {
   getUserCryptoDeposits(userId: number): Promise<CryptoDeposit[]>;
   updateCryptoDeposit(id: number, data: Partial<CryptoDeposit>): Promise<void>;
   getAllPendingCryptoDeposits(): Promise<CryptoDeposit[]>;
+
+  createUptimeLog(data: InsertUptimeLog): Promise<UptimeLog>;
+  getRecentUptimeLogs(limit?: number): Promise<UptimeLog[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -450,6 +463,14 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(cryptoDeposits).where(
       or(eq(cryptoDeposits.status, "pending"), eq(cryptoDeposits.status, "confirming"))
     ).orderBy(desc(cryptoDeposits.id)).all();
+  }
+
+  async createUptimeLog(data: InsertUptimeLog): Promise<UptimeLog> {
+    return db.insert(uptimeLogs).values(data).returning().get();
+  }
+
+  async getRecentUptimeLogs(limit = 50): Promise<UptimeLog[]> {
+    return db.select().from(uptimeLogs).orderBy(desc(uptimeLogs.id)).limit(limit).all();
   }
 }
 

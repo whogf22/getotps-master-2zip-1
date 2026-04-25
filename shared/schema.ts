@@ -123,3 +123,16 @@ export const cryptoDeposits = sqliteTable("crypto_deposits", {
 export const insertCryptoDepositSchema = createInsertSchema(cryptoDeposits).omit({ id: true });
 export type InsertCryptoDeposit = z.infer<typeof insertCryptoDepositSchema>;
 export type CryptoDeposit = typeof cryptoDeposits.$inferSelect;
+
+export const uptimeLogs = sqliteTable("uptime_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  status: text("status").notNull(),
+  statusCode: integer("status_code").notNull(),
+  latencyMs: integer("latency_ms"),
+  source: text("source").notNull().default("healthz"),
+  checkedAt: text("checked_at").notNull(),
+});
+
+export const insertUptimeLogSchema = createInsertSchema(uptimeLogs).omit({ id: true });
+export type InsertUptimeLog = z.infer<typeof insertUptimeLogSchema>;
+export type UptimeLog = typeof uptimeLogs.$inferSelect;
