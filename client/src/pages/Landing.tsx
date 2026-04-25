@@ -222,8 +222,8 @@ export default function Landing() {
               <Link href="/dashboard"><Button size="sm" className="l-cta-btn">Dashboard <ArrowRight className="w-3.5 h-3.5" /></Button></Link>
             ) : (
               <>
-                <Link href="/login"><button className="l-nav-link">Sign In</button></Link>
-                <Link href="/register"><button className="l-cta-btn">Get Started Free</button></Link>
+                <Link href="/login"><a className="l-nav-link">Sign In</a></Link>
+                <Link href="/register"><a className="l-cta-btn">Get Started Free</a></Link>
               </>
             )}
           </div>
