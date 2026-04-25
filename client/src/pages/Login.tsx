@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Logo } from "@/components/Logo";
+import { HCaptchaField } from "@/components/HCaptchaField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,8 +13,11 @@ import { Moon, Sun, Eye, EyeOff, ArrowRight, CheckCircle } from "lucide-react";
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const captchaRequired = Boolean(import.meta.env.VITE_HCAPTCHA_SITE_KEY);
   const { login } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
@@ -24,12 +28,18 @@ export default function Login() {
       toast({ title: "Error", description: "Please fill in all fields", variant: "destructive" });
       return;
     }
+    if (captchaRequired && !captchaToken) {
+      toast({ title: "Error", description: "Please complete the captcha challenge", variant: "destructive" });
+      return;
+    }
     setLoading(true);
     try {
-      await login(email, password);
+      await login(email, password, captchaToken);
       window.location.assign("/dashboard");
     } catch (err: any) {
       toast({ title: "Login failed", description: err.message || "Invalid credentials", variant: "destructive" });
+      setCaptchaToken(null);
+      setCaptchaResetSignal((value) => value + 1);
     } finally {
       setLoading(false);
     }
@@ -133,6 +143,13 @@ export default function Login() {
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+              </div>
+
+              <div className="pt-2">
+                <HCaptchaField
+                  onTokenChange={setCaptchaToken}
+                  resetSignal={captchaResetSignal}
+                />
               </div>
 
               <Button

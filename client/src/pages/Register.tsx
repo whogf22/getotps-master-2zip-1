@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Moon, Sun, Eye, EyeOff } from "lucide-react";
+import { HCaptchaField } from "@/components/HCaptchaField";
 
 export default function Register() {
   const [username, setUsername] = useState("");
@@ -16,6 +17,9 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
+  const captchaRequired = Boolean(import.meta.env.VITE_HCAPTCHA_SITE_KEY);
   const { register } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
@@ -30,12 +34,18 @@ export default function Register() {
       toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
       return;
     }
+    if (captchaRequired && !captchaToken) {
+      toast({ title: "Verification required", description: "Please complete the hCaptcha challenge", variant: "destructive" });
+      return;
+    }
     setLoading(true);
     try {
-      await register(username, email, password);
+      await register(username, email, password, captchaToken || undefined);
       window.location.assign("/dashboard");
     } catch (err: any) {
       toast({ title: "Registration failed", description: err.message || "Something went wrong", variant: "destructive" });
+      setCaptchaToken(null);
+      setCaptchaResetSignal((current) => current + 1);
     } finally {
       setLoading(false);
     }
@@ -112,6 +122,10 @@ export default function Register() {
               <Button type="submit" className="w-full" disabled={loading} data-testid="button-submit-register">
                 {loading ? "Creating account..." : "Create Account"}
               </Button>
+
+              <div className="pt-1">
+                <HCaptchaField onTokenChange={setCaptchaToken} resetSignal={captchaResetSignal} />
+              </div>
             </form>
 
             <div className="mt-5 text-center">

@@ -57,6 +57,13 @@ Use package scripts from `package.json`:
   - `HEALTHCHECK_URL` (example: `https://getotps.online`)
 - The workflow appends `/healthz` automatically.
 
+## Environment Variables
+
+- Backend:
+  - `HCAPTCHA_SECRET` - secret key used to verify hCaptcha tokens on auth endpoints.
+- Frontend:
+  - `VITE_HCAPTCHA_SITE_KEY` - public site key used to render hCaptcha on `/login` and `/register`.
+
 ## Testing Expectations
 
 - For most code changes, run `npm run check`.

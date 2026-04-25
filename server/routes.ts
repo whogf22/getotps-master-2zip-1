@@ -74,6 +74,46 @@ function safeError(err: any): string {
   return err?.message || "Unknown error";
 }
 
+async function verifyHCaptchaToken(token: string | undefined, remoteIp?: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const secret = process.env.HCAPTCHA_SECRET;
+  if (!secret) {
+    return { ok: true };
+  }
+
+  if (!token) {
+    return { ok: false, message: "Captcha verification is required" };
+  }
+
+  try {
+    const body = new URLSearchParams({
+      secret,
+      response: token,
+    });
+    if (remoteIp) {
+      body.set("remoteip", remoteIp);
+    }
+
+    const response = await fetch("https://hcaptcha.com/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      return { ok: false, message: "Captcha verification failed" };
+    }
+
+    const data = await response.json() as { success?: boolean };
+    if (!data.success) {
+      return { ok: false, message: "Captcha challenge failed. Please try again." };
+    }
+
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "Captcha verification service unavailable. Please try again." };
+  }
+}
+
 async function syncProxnumServices(): Promise<void> {
   try {
     const apiServices = await getCachedServices();
@@ -259,11 +299,11 @@ export async function registerRoutes(
   // ========== RATE LIMITING ==========
 
   const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
+    windowMs: 1 * 60 * 1000,
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { message: "Too many attempts. Please try again in 15 minutes." },
+    message: { message: "Too many attempts. Please try again in 1 minute." },
   });
 
   const apiLimiter = rateLimit({
@@ -274,12 +314,12 @@ export async function registerRoutes(
     message: { message: "Too many requests. Please slow down." },
   });
 
-  const orderLimiter = rateLimit({
+  const otpLimiter = rateLimit({
     windowMs: 1 * 60 * 1000,
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { message: "Too many order requests. Please slow down." },
+    message: { message: "Too many OTP requests. Please slow down." },
   });
 
   app.use("/api", apiLimiter);
@@ -288,7 +328,11 @@ export async function registerRoutes(
 
   app.post("/api/auth/register", authLimiter, async (req, res) => {
     try {
-      const { username, email, password } = req.body;
+      const { username, email, password, hCaptchaToken } = req.body;
+      const captchaResult = await verifyHCaptchaToken(hCaptchaToken, req.ip);
+      if (!captchaResult.ok) {
+        return res.status(400).json({ message: captchaResult.message });
+      }
       if (!username || !email || !password) {
         return res.status(400).json({ message: "All fields required" });
       }
@@ -319,7 +363,13 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/auth/login", authLimiter, (req, res, next) => {
+  app.post("/api/auth/login", authLimiter, async (req, res, next) => {
+    const { hCaptchaToken } = req.body;
+    const captchaResult = await verifyHCaptchaToken(hCaptchaToken, req.ip);
+    if (!captchaResult.ok) {
+      return res.status(400).json({ message: captchaResult.message });
+    }
+
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return res.status(500).json({ message: safeError(err) });
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
@@ -389,7 +439,7 @@ export async function registerRoutes(
 
   // ========== ORDERS (Proxnum virtual numbers) ==========
 
-  app.post("/api/orders", requireAuth, orderLimiter, async (req, res) => {
+  app.post("/api/orders", requireAuth, otpLimiter, async (req, res) => {
     try {
       const user = req.user as any;
       const { serviceId, serviceName, country } = req.body;
@@ -505,7 +555,7 @@ export async function registerRoutes(
     res.json(order);
   });
 
-  app.post("/api/orders/:id/check-sms", requireAuth, async (req, res) => {
+  app.post("/api/orders/:id/check-sms", requireAuth, otpLimiter, async (req, res) => {
     try {
       const user = req.user as any;
       const order = await storage.getOrder(Number(req.params.id));
@@ -616,7 +666,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/orders/:id/resend", requireAuth, async (req, res) => {
+  app.post("/api/orders/:id/resend", requireAuth, otpLimiter, async (req, res) => {
     try {
       const user = req.user as any;
       const order = await storage.getOrder(Number(req.params.id));
@@ -654,7 +704,7 @@ export async function registerRoutes(
 
   // ========== RENTALS (Proxnum rental numbers) ==========
 
-  app.post("/api/rentals", requireAuth, async (req, res) => {
+  app.post("/api/rentals", requireAuth, otpLimiter, async (req, res) => {
     try {
       const user = req.user as any;
       const { serviceId, serviceName, country, days } = req.body;
@@ -1191,7 +1241,7 @@ export async function registerRoutes(
     res.json({ balance: user.balance });
   });
 
-  app.post("/api/v1/order", requireApiKey, async (req, res) => {
+  app.post("/api/v1/order", otpLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
       const { service, country } = req.body;
@@ -1346,7 +1396,7 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
-  app.post("/api/v1/order/:id/resend", requireApiKey, async (req, res) => {
+  app.post("/api/v1/order/:id/resend", otpLimiter, requireApiKey, async (req, res) => {
     try {
       const user = (req as any).apiUser;
       const order = await storage.getOrder(Number(req.params.id));

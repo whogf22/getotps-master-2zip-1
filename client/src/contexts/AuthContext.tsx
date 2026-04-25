@@ -14,9 +14,9 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, hCaptchaToken?: string) => Promise<void>;
   logout: () => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
+  register: (username: string, email: string, password: string, hCaptchaToken?: string) => Promise<void>;
   refreshUser: () => void;
 }
 
@@ -41,8 +41,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     staleTime: 30000,
   });
 
-  const login = async (email: string, password: string) => {
-    const res = await apiRequest("POST", "/api/auth/login", { email, password });
+  const login = async (email: string, password: string, hCaptchaToken?: string) => {
+    const res = await apiRequest("POST", "/api/auth/login", { email, password, hCaptchaToken });
     const userData = await res.json();
     queryClient.setQueryData(["/api/auth/me"], userData);
   };
@@ -53,8 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
   };
 
-  const register = async (username: string, email: string, password: string) => {
-    const res = await apiRequest("POST", "/api/auth/register", { username, email, password });
+  const register = async (username: string, email: string, password: string, hCaptchaToken?: string) => {
+    const res = await apiRequest("POST", "/api/auth/register", { username, email, password, hCaptchaToken });
     const userData = await res.json();
     queryClient.setQueryData(["/api/auth/me"], userData);
   };
