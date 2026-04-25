@@ -4,18 +4,21 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Moon, Sun, Eye, EyeOff } from "lucide-react";
 import { HCaptchaField } from "@/components/HCaptchaField";
+import zxcvbn from "zxcvbn";
 
 export default function Register() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
@@ -23,6 +26,16 @@ export default function Register() {
   const { register } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
+  const passwordStrength = password ? zxcvbn(password) : null;
+  const passwordScore = passwordStrength?.score ?? 0;
+  const passwordLabel = ["Very weak", "Weak", "Fair", "Strong", "Excellent"][passwordScore];
+  const passwordColor = [
+    "bg-red-500",
+    "bg-orange-500",
+    "bg-yellow-500",
+    "bg-emerald-500",
+    "bg-green-500",
+  ][passwordScore];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,8 +43,12 @@ export default function Register() {
       toast({ title: "Error", description: "Please fill in all fields", variant: "destructive" });
       return;
     }
-    if (password.length < 6) {
-      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
+    if (password.length < 8) {
+      toast({ title: "Error", description: "Password must be at least 8 characters", variant: "destructive" });
+      return;
+    }
+    if (!acceptedTerms) {
+      toast({ title: "Error", description: "You must agree to Terms & Privacy before creating an account", variant: "destructive" });
       return;
     }
     if (captchaRequired && !captchaToken) {
@@ -40,7 +57,7 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      await register(username, email, password, captchaToken || undefined);
+      await register(username, email, password, captchaToken || undefined, acceptedTerms);
       window.location.assign("/verify-email");
     } catch (err: any) {
       toast({ title: "Registration failed", description: err.message || "Something went wrong", variant: "destructive" });
@@ -103,7 +120,7 @@ export default function Register() {
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
-                    placeholder="Min. 6 characters"
+                    placeholder="Min. 8 characters"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                     autoComplete="new-password"
@@ -118,6 +135,39 @@ export default function Register() {
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {password.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full transition-all ${passwordColor}`}
+                        style={{ width: `${((passwordScore + 1) / 5) * 100}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Password strength: <span className="font-medium">{passwordLabel}</span>
+                    </p>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-border p-3">
+                <Checkbox
+                  id="accept-terms"
+                  checked={acceptedTerms}
+                  onCheckedChange={(checked) => setAcceptedTerms(Boolean(checked))}
+                  className="mt-0.5"
+                  data-testid="checkbox-accept-terms"
+                />
+                <Label htmlFor="accept-terms" className="text-xs leading-relaxed text-muted-foreground">
+                  I agree to the{" "}
+                  <Link href="/terms">
+                    <a className="text-primary hover:underline">Terms of Service</a>
+                  </Link>{" "}
+                  and{" "}
+                  <Link href="/privacy">
+                    <a className="text-primary hover:underline">Privacy Policy</a>
+                  </Link>
+                  .
+                </Label>
               </div>
               <Button type="submit" className="w-full" disabled={loading} data-testid="button-submit-register">
                 {loading ? "Creating account..." : "Create Account"}

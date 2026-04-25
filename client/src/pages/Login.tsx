@@ -13,6 +13,7 @@ import { Moon, Sun, Eye, EyeOff, ArrowRight, CheckCircle } from "lucide-react";
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
@@ -34,7 +35,7 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await login(email, password, captchaToken || undefined);
+      await login(email, password, captchaToken || undefined, rememberMe);
       window.location.assign("/dashboard");
     } catch (err: any) {
       toast({ title: "Login failed", description: err.message || "Invalid credentials", variant: "destructive" });
@@ -144,6 +145,21 @@ export default function Login() {
                   </button>
                 </div>
               </div>
+              <label className="flex items-center justify-between text-sm text-muted-foreground">
+                <span className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(event) => setRememberMe(event.target.checked)}
+                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                    data-testid="input-remember-me"
+                  />
+                  Remember me for 30 days
+                </span>
+                <Link href="/forgot-password">
+                  <a className="text-primary hover:text-primary/80 font-medium transition-colors">Forgot password?</a>
+                </Link>
+              </label>
 
               <div className="pt-2">
                 <HCaptchaField
@@ -163,12 +179,6 @@ export default function Login() {
                 )}
               </Button>
             </form>
-
-            <p className="mt-6 text-center text-sm text-muted-foreground">
-              <Link href="/forgot-password">
-                <a className="text-primary hover:text-primary/80 font-semibold transition-colors">Forgot password?</a>
-              </Link>
-            </p>
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
               Don't have an account?{" "}

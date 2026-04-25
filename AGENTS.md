@@ -52,6 +52,8 @@ Use package scripts from `package.json`:
 - OpenAPI spec: `server/openapi.yaml` (rendered in-app at `/api-docs`).
 - Keep-alive workflow: `.github/workflows/keepalive-healthz.yml` pings `/healthz` every 5 minutes.
 - Automatic rental refund sweep: runs every minute in `server/routes.ts` to refund expired rentals with zero SMS messages.
+- Auth routes enforce password minimum length of 8 characters and require Terms/Privacy acceptance on registration.
+- Login supports optional `rememberMe` in `POST /api/auth/login` to extend session cookie max-age to 30 days.
 
 ## CI/Automation Environment
 

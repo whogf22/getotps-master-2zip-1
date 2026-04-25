@@ -426,7 +426,13 @@ export async function registerRoutes(
 
   app.post("/api/auth/register", authLimiter, async (req, res) => {
     try {
-      const { username, email, password, hCaptchaToken } = req.body;
+      const { username, email, password, hCaptchaToken, acceptedTerms } = req.body as {
+        username?: string;
+        email?: string;
+        password?: string;
+        hCaptchaToken?: string;
+        acceptedTerms?: boolean;
+      };
       const captchaResult = await verifyHCaptchaToken(hCaptchaToken, req.ip);
       if (!captchaResult.ok) {
         return res.status(400).json({ message: captchaResult.message });
@@ -442,6 +448,9 @@ export async function registerRoutes(
       }
       if (username.length < 3 || username.length > 32 || !/^[a-zA-Z0-9_-]+$/.test(username)) {
         return res.status(400).json({ message: "Username must be 3-32 characters (letters, numbers, _ or -)" });
+      }
+      if (!acceptedTerms) {
+        return res.status(400).json({ message: "You must accept the Terms of Service and Privacy Policy" });
       }
       const existing = await storage.getUserByEmail(email);
       if (existing) return res.status(400).json({ message: "Email already registered" });
@@ -473,7 +482,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/auth/login", authLimiter, async (req, res, next) => {
-    const { hCaptchaToken } = req.body;
+    const { hCaptchaToken, rememberMe } = req.body as { hCaptchaToken?: string; rememberMe?: boolean };
     const captchaResult = await verifyHCaptchaToken(hCaptchaToken, req.ip);
     if (!captchaResult.ok) {
       return res.status(400).json({ message: captchaResult.message });
@@ -484,6 +493,11 @@ export async function registerRoutes(
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
       req.login(user, (loginErr) => {
         if (loginErr) return res.status(500).json({ message: "Login failed" });
+        if (rememberMe) {
+          req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
+        } else {
+          req.session.cookie.maxAge = 7 * 24 * 60 * 60 * 1000;
+        }
         const { password: _, apiKey: __, ...safeUser } = user;
         res.json(safeUser);
       });
