@@ -51,6 +51,7 @@ Use package scripts from `package.json`:
 - Pricing endpoint: `GET /api/pricing` (public pricing table from `services` table).
 - OpenAPI spec: `server/openapi.yaml` (rendered in-app at `/api-docs`).
 - Keep-alive workflow: `.github/workflows/keepalive-healthz.yml` pings `/healthz` every 5 minutes.
+- Automatic rental refund sweep: runs every minute in `server/routes.ts` to refund expired rentals with zero SMS messages.
 
 ## CI/Automation Environment
 

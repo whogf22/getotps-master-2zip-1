@@ -322,6 +322,56 @@ export async function registerRoutes(
     res.status(403).json({ message: "Forbidden" });
   }
 
+  let rentalSweepRunning = false;
+  const processedRentalRefundIds = new Set<number>();
+  async function processExpiredRentals() {
+    if (rentalSweepRunning) return;
+    rentalSweepRunning = true;
+
+    try {
+      const now = Date.now();
+      const allRentals = await storage.getAllRentals();
+      const expiredActiveRentals = allRentals.filter((rental) =>
+        rental.status === "active" && new Date(rental.expiresAt).getTime() <= now
+      );
+
+      for (const rental of expiredActiveRentals) {
+        if (processedRentalRefundIds.has(rental.id)) {
+          continue;
+        }
+        const messages = await storage.getRentalMessages(rental.id);
+        const hasMessages = messages.length > 0;
+
+        if (!hasMessages) {
+          const freshUser = await storage.getUser(rental.userId);
+          if (freshUser) {
+            const refundAmount = parseFloat(rental.price);
+            const newBalance = (parseFloat(freshUser.balance) + refundAmount).toFixed(2);
+            await storage.updateUserBalance(freshUser.id, newBalance);
+            await storage.createTransaction({
+              userId: freshUser.id,
+              type: "refund",
+              amount: refundAmount.toFixed(2),
+              description: "Rental expired without SMS - automatic refund",
+              orderId: rental.id,
+              stripeSessionId: null,
+              createdAt: new Date().toISOString(),
+            });
+          }
+          await storage.updateRentalStatus(rental.id, "refunded");
+          processedRentalRefundIds.add(rental.id);
+        } else {
+          await storage.updateRentalStatus(rental.id, "expired");
+          processedRentalRefundIds.add(rental.id);
+        }
+      }
+    } catch (err) {
+      console.error("Expired rental sweep failed:", err);
+    } finally {
+      rentalSweepRunning = false;
+    }
+  }
+
   // ========== RATE LIMITING ==========
 
   const authLimiter = rateLimit({
@@ -1585,6 +1635,13 @@ export async function registerRoutes(
   }).catch(err => {
     console.error("Proxnum initial sync failed:", err);
   });
+
+  processExpiredRentals().catch((err) => {
+    console.error("Initial expired rental sweep failed:", err);
+  });
+  setInterval(() => {
+    void processExpiredRentals();
+  }, 60 * 1000);
 
 
     // SEO: robots.txt
