@@ -1,0 +1,146 @@
+openapi: 3.0.3
+info:
+  title: GetOTPs API
+  version: 1.0.0
+  description: Public API for purchasing activations, checking balance, fetching activation status, and handling webhook updates.
+servers:
+  - url: https://getotps.online
+    description: Production
+  - url: http://localhost:5000
+    description: Local development
+paths:
+  /api/v1/order:
+    post:
+      summary: Purchase activation
+      description: Purchase a number activation for a given service and country.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - service
+              properties:
+                service:
+                  type: string
+                  example: whatsapp
+                country:
+                  type: string
+                  example: us
+      responses:
+        "200":
+          description: Activation purchased
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: integer
+                    example: 42
+                  phoneNumber:
+                    type: string
+                    example: "+12125551234"
+                  status:
+                    type: string
+                    example: pending
+                  expiresAt:
+                    type: string
+                    format: date-time
+        "400":
+          description: Validation or balance failure
+        "401":
+          description: API key missing or invalid
+        "503":
+          description: Provider unavailable
+
+  /api/v1/balance:
+    get:
+      summary: Get account balance
+      description: Returns the current prepaid wallet balance for the API key owner.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Current balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balance:
+                    type: string
+                    example: "24.50"
+        "401":
+          description: API key missing or invalid
+
+  /api/v1/order/{id}:
+    get:
+      summary: Get activation status
+      description: Returns activation state and OTP payload when available.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Activation status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: integer
+                  status:
+                    type: string
+                    example: received
+                  otpCode:
+                    type: string
+                    nullable: true
+                    example: "847291"
+                  messages:
+                    type: array
+                    items:
+                      type: string
+        "403":
+          description: Not owner of activation
+        "404":
+          description: Activation not found
+
+  /api/v1/webhooks/proxnum:
+    post:
+      summary: Proxnum webhook
+      description: Webhook endpoint for provider delivery updates. Implement signature verification before production use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                activation_id:
+                  type: string
+                  example: "abc123"
+                status:
+                  type: string
+                  example: completed
+                message:
+                  type: string
+                  example: "Your code is 847291"
+      responses:
+        "200":
+          description: Webhook accepted
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

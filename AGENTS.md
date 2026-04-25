@@ -49,6 +49,7 @@ Use package scripts from `package.json`:
 
 - Health endpoint: `GET /healthz` (writes uptime checks to `uptime_logs` table).
 - Pricing endpoint: `GET /api/pricing` (public pricing table from `services` table).
+- OpenAPI spec: `server/openapi.yaml` (rendered in-app at `/api-docs`).
 - Keep-alive workflow: `.github/workflows/keepalive-healthz.yml` pings `/healthz` every 5 minutes.
 
 ## CI/Automation Environment
