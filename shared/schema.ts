@@ -10,6 +10,7 @@ export const users = sqliteTable("users", {
   balance: text("balance").notNull().default("0.00"),
   apiKey: text("api_key").unique(),
   role: text("role").notNull().default("user"),
+  emailVerifiedAt: text("email_verified_at"),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, balance: true, apiKey: true, role: true });

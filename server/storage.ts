@@ -28,7 +28,8 @@ sqlite.exec(`
     password TEXT NOT NULL,
     balance TEXT NOT NULL DEFAULT '0.00',
     api_key TEXT UNIQUE,
-    role TEXT NOT NULL DEFAULT 'user'
+    role TEXT NOT NULL DEFAULT 'user',
+    email_verified_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS services (
@@ -113,6 +114,24 @@ sqlite.exec(`
     completed_at TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS uptime_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     status TEXT NOT NULL,
@@ -128,6 +147,9 @@ try {
 } catch (e) {}
 try {
   sqlite.exec(`ALTER TABLE orders ADD COLUMN proxnum_id TEXT`);
+} catch (e) {}
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN email_verified_at TEXT`);
 } catch (e) {}
 
 function seedSettings() {
@@ -204,7 +226,14 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByApiKey(apiKey: string): Promise<User | undefined>;
+  getUserByEmailVerificationToken(token: string): Promise<{ id: number; user: User } | undefined>;
+  getUserByPasswordResetToken(token: string): Promise<{ id: number; user: User } | undefined>;
   createUser(user: { username: string; email: string; password: string }): Promise<User>;
+  setEmailVerificationToken(userId: number, tokenHash: string, expiresAt: string): Promise<void>;
+  clearEmailVerificationToken(id: number): Promise<void>;
+  setPasswordResetToken(userId: number, tokenHash: string, expiresAt: string): Promise<void>;
+  clearPasswordResetToken(id: number): Promise<void>;
+  markEmailVerified(userId: number): Promise<void>;
   updateUserBalance(userId: number, balance: string): Promise<void>;
   updateUserPassword(userId: number, password: string): Promise<void>;
   generateApiKey(userId: number): Promise<string>;
@@ -278,9 +307,145 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(users).where(eq(users.apiKey, apiKey)).get();
   }
 
+  async getUserByEmailVerificationToken(token: string): Promise<{ id: number; user: User } | undefined> {
+    const nowIso = new Date().toISOString();
+    const records = sqlite
+      .prepare(
+        `
+          SELECT t.id as token_id, t.token_hash, t.expires_at, t.used_at, u.*
+          FROM email_verification_tokens t
+          JOIN users u ON u.id = t.user_id
+          WHERE t.used_at IS NULL
+            AND t.expires_at > ?
+          ORDER BY t.id DESC
+        `
+      )
+      .all(nowIso) as Array<{
+      token_id: number;
+      token_hash: string;
+      expires_at: string;
+      used_at: string | null;
+      id: number;
+      username: string;
+      email: string;
+      password: string;
+      balance: string;
+      api_key: string | null;
+      role: string;
+      email_verified_at: string | null;
+    }>;
+
+    for (const row of records) {
+      const matches = await bcrypt.compare(token, row.token_hash);
+      if (matches) {
+        return {
+          id: row.token_id,
+          user: {
+            id: row.id,
+            username: row.username,
+            email: row.email,
+            password: row.password,
+            balance: row.balance,
+            apiKey: row.api_key,
+            role: row.role,
+            emailVerifiedAt: row.email_verified_at,
+          } as User,
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  async getUserByPasswordResetToken(token: string): Promise<{ id: number; user: User } | undefined> {
+    const nowIso = new Date().toISOString();
+    const records = sqlite
+      .prepare(
+        `
+          SELECT t.id as token_id, t.token_hash, t.expires_at, t.used_at, u.*
+          FROM password_reset_tokens t
+          JOIN users u ON u.id = t.user_id
+          WHERE t.used_at IS NULL
+            AND t.expires_at > ?
+          ORDER BY t.id DESC
+        `
+      )
+      .all(nowIso) as Array<{
+      token_id: number;
+      token_hash: string;
+      expires_at: string;
+      used_at: string | null;
+      id: number;
+      username: string;
+      email: string;
+      password: string;
+      balance: string;
+      api_key: string | null;
+      role: string;
+      email_verified_at: string | null;
+    }>;
+
+    for (const row of records) {
+      const matches = await bcrypt.compare(token, row.token_hash);
+      if (matches) {
+        return {
+          id: row.token_id,
+          user: {
+            id: row.id,
+            username: row.username,
+            email: row.email,
+            password: row.password,
+            balance: row.balance,
+            apiKey: row.api_key,
+            role: row.role,
+            emailVerifiedAt: row.email_verified_at,
+          } as User,
+        };
+      }
+    }
+
+    return undefined;
+  }
+
   async createUser(data: { username: string; email: string; password: string }): Promise<User> {
     const apiKey = crypto.randomBytes(32).toString("hex");
     return db.insert(users).values({ ...data, apiKey }).returning().get();
+  }
+
+  async setEmailVerificationToken(userId: number, tokenHash: string, expiresAt: string): Promise<void> {
+    sqlite
+      .prepare("UPDATE email_verification_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL")
+      .run(new Date().toISOString(), userId);
+    sqlite
+      .prepare(
+        "INSERT INTO email_verification_tokens (user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)"
+      )
+      .run(userId, tokenHash, expiresAt, new Date().toISOString());
+  }
+
+  async clearEmailVerificationToken(id: number): Promise<void> {
+    sqlite
+      .prepare("UPDATE email_verification_tokens SET used_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), id);
+  }
+
+  async setPasswordResetToken(userId: number, tokenHash: string, expiresAt: string): Promise<void> {
+    sqlite
+      .prepare("UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL")
+      .run(new Date().toISOString(), userId);
+    sqlite
+      .prepare("INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)")
+      .run(userId, tokenHash, expiresAt, new Date().toISOString());
+  }
+
+  async clearPasswordResetToken(id: number): Promise<void> {
+    sqlite
+      .prepare("UPDATE password_reset_tokens SET used_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), id);
+  }
+
+  async markEmailVerified(userId: number): Promise<void> {
+    db.update(users).set({ emailVerifiedAt: new Date().toISOString() }).where(eq(users.id, userId)).run();
   }
 
   async updateUserBalance(userId: number, balance: string): Promise<void> {

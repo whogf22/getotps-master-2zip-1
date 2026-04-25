@@ -165,6 +165,12 @@ export default function Login() {
             </form>
 
             <p className="mt-6 text-center text-sm text-muted-foreground">
+              <Link href="/forgot-password">
+                <a className="text-primary hover:text-primary/80 font-semibold transition-colors">Forgot password?</a>
+              </Link>
+            </p>
+
+            <p className="mt-4 text-center text-sm text-muted-foreground">
               Don't have an account?{" "}
               <Link href="/register">
                 <a className="text-primary hover:text-primary/80 font-semibold transition-colors">Create one free</a>

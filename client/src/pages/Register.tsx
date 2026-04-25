@@ -41,7 +41,7 @@ export default function Register() {
     setLoading(true);
     try {
       await register(username, email, password, captchaToken || undefined);
-      window.location.assign("/dashboard");
+      window.location.assign("/verify-email");
     } catch (err: any) {
       toast({ title: "Registration failed", description: err.message || "Something went wrong", variant: "destructive" });
       setCaptchaToken(null);

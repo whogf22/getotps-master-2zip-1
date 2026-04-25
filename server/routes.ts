@@ -3,12 +3,14 @@ import path from "path";
 import { createServer, type Server } from "http";
 import { storage, sqlite as sqliteClient } from "./storage";
 import { proxnumApi, getCachedServices, getCachedCountries, getCachedPrices, getUSCountryCode, findCountryCode, friendlyError, type ProxnumService } from "./proxnum";
+import { sendTransactionalEmail } from "./email";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcryptjs";
 import rateLimit from "express-rate-limit";
 import BetterSqlite3SessionStore from "better-sqlite3-session-store";
+import crypto from "crypto";
 
 declare module "express-session" {
   interface SessionData {
@@ -72,6 +74,26 @@ function safeError(err: any): string {
     return "Something went wrong. Please try again.";
   }
   return err?.message || "Unknown error";
+}
+
+function generateToken(bytes = 32): string {
+  return crypto.randomBytes(bytes).toString("hex");
+}
+
+function buildAppUrl(): string {
+  return process.env.APP_BASE_URL || "http://localhost:5000";
+}
+
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function buildVerificationUrl(token: string): string {
+  return `${buildAppUrl()}/verify-email?token=${encodeURIComponent(token)}`;
+}
+
+function buildPasswordResetUrl(token: string): string {
+  return `${buildAppUrl()}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
 const COUNTRY_NAMES: Record<string, string> = {
@@ -427,7 +449,18 @@ export async function registerRoutes(
       if (existingUsername) return res.status(400).json({ message: "Username already taken" });
 
       const hashedPassword = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({ username, email, password: hashedPassword });
+      const user = await storage.createUser({ username, email: email.toLowerCase(), password: hashedPassword });
+
+      const verificationToken = generateToken(32);
+      const verificationTokenHash = await bcrypt.hash(verificationToken, 10);
+      const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await storage.setEmailVerificationToken(user.id, verificationTokenHash, verificationExpiresAt);
+      await sendTransactionalEmail({
+        type: "email-verification",
+        email: user.email,
+        username: user.username,
+        token: verificationToken,
+      });
 
       req.login(user, (err) => {
         if (err) return res.status(500).json({ message: "Login failed after registration" });
@@ -467,6 +500,82 @@ export async function registerRoutes(
     if (!freshUser) return res.status(404).json({ message: "User not found" });
     const { password: _, apiKey: __, ...safeUser } = freshUser;
     res.json(safeUser);
+  });
+
+  app.post("/api/auth/forgot-password", authLimiter, async (req, res) => {
+    try {
+      const { email } = req.body as { email?: string };
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ message: "Valid email is required" });
+      }
+
+      const user = await storage.getUserByEmail(email.toLowerCase());
+      if (user) {
+        const rawToken = generateToken(32);
+        const tokenHash = await bcrypt.hash(rawToken, 10);
+        const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        await storage.setPasswordResetToken(user.id, tokenHash, expiresAt);
+
+        await sendTransactionalEmail({
+          type: "password-reset",
+          email: user.email,
+          username: user.username,
+          token: rawToken,
+        });
+      }
+
+      return res.json({
+        message: "If an account exists for that email, a password reset link has been sent.",
+      });
+    } catch (err: any) {
+      return res.status(500).json({ message: safeError(err) });
+    }
+  });
+
+  app.post("/api/auth/reset-password", authLimiter, async (req, res) => {
+    try {
+      const { token, newPassword } = req.body as { token?: string; newPassword?: string };
+      if (!token || !newPassword) {
+        return res.status(400).json({ message: "Token and new password are required" });
+      }
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
+      }
+
+      const tokenRecord = await storage.getUserByPasswordResetToken(token);
+      if (!tokenRecord) {
+        return res.status(400).json({ message: "Invalid or expired reset token" });
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await storage.updateUserPassword(tokenRecord.user.id, hashedPassword);
+      await storage.clearPasswordResetToken(tokenRecord.id);
+
+      return res.json({ message: "Password updated successfully" });
+    } catch (err: any) {
+      return res.status(500).json({ message: safeError(err) });
+    }
+  });
+
+  app.post("/api/auth/verify-email", authLimiter, async (req, res) => {
+    try {
+      const { token } = req.body as { token?: string };
+      if (!token) {
+        return res.status(400).json({ message: "Verification token is required" });
+      }
+
+      const tokenRecord = await storage.getUserByEmailVerificationToken(token);
+      if (!tokenRecord) {
+        return res.status(400).json({ message: "Invalid or expired verification token" });
+      }
+
+      await storage.markEmailVerified(tokenRecord.user.id);
+      await storage.clearEmailVerificationToken(tokenRecord.id);
+
+      return res.json({ message: "Email verified successfully" });
+    } catch (err: any) {
+      return res.status(500).json({ message: safeError(err) });
+    }
   });
 
   // ========== SERVICES (Proxnum-backed) ==========

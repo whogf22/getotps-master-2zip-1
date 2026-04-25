@@ -63,6 +63,9 @@ Use package scripts from `package.json`:
 
 - Backend:
   - `HCAPTCHA_SECRET` - secret key used to verify hCaptcha tokens on auth endpoints.
+  - `RESEND_API_KEY` - Resend API key for transactional emails (password reset and verification).
+  - `EMAIL_FROM` - sender address used for auth emails (example: `no-reply@getotps.online`).
+  - `APP_BASE_URL` - public app origin used to generate reset/verification links.
 - Frontend:
   - `VITE_HCAPTCHA_SITE_KEY` - public site key used to render hCaptcha on `/login` and `/register`.
 

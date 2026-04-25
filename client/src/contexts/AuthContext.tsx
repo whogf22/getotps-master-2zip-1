@@ -6,6 +6,7 @@ interface User {
   id: number;
   username: string;
   email: string;
+  emailVerified?: number | boolean;
   balance: string;
   apiKey: string | null;
   role: string;
