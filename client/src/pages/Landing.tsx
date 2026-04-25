@@ -272,7 +272,7 @@ export default function Landing() {
 
             <div className="l-hero-ctas">
               <Link href="/register"><button className="l-btn-primary">Get Number Now <ArrowRight className="w-5 h-5" /></button></Link>
-                  <button className="l-btn-glass" onClick={() => navigate("/services")}>View Services</button>
+              <Link href="/services"><button className="l-btn-glass">Browse Services</button></Link>
             </div>
 
             <div className="l-hero-pills">
@@ -525,7 +525,7 @@ export default function Landing() {
                 <p className="l-final-sub">Join thousands verifying accounts without exposing their real number.</p>
                 <div className="l-hero-ctas justify-center">
                   <Link href="/register"><button className="l-btn-primary">Create Free Account <ArrowRight className="w-5 h-5" /></button></Link>
-                  <button className="l-btn-glass" onClick={() => navigate("/services")}>Browse Services</button>
+                  <Link href="/services"><button className="l-btn-glass">Browse Services</button></Link>
                 </div>
                 <p className="l-final-note">No credit card · Pay per use · Cancel anytime</p>
               </div>
