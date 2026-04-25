@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
+import { trackEvent } from "@/lib/analytics";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign,
@@ -118,6 +119,7 @@ export default function AddFunds() {
       queryClient.invalidateQueries({ queryKey: ["/api/crypto/deposits"] });
       queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      trackEvent("topup", { amount: data.deposit?.amount ?? activeDeposit?.amount ?? 0, status: "confirmed" });
       refreshUser();
       setActiveDeposit(null);
       toast({ title: "Deposit confirmed", description: `Balance updated to $${data.newBalance}` });

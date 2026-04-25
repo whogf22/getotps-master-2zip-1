@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { trackEvent } from "@/lib/analytics";
 import { Phone, Copy, Check, X, RefreshCw, MessageSquare, Loader2 } from "lucide-react";
 
 function Countdown({ expiresAt }: { expiresAt: string }) {
@@ -83,10 +84,14 @@ export default function ActiveNumbers() {
 
   const checkSmsMutation = useMutation({
     mutationFn: async (orderId: number) => { const res = await apiRequest("POST", `/api/orders/${orderId}/check-sms`, {}); return res.json(); },
-    onSuccess: (data: any) => {
+    onSuccess: (data: any, orderId: number) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders/active"] });
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       if (data.status === "received" && data.otpCode) {
+        trackEvent("first_otp", {
+          orderId: String(orderId),
+          hasCode: true,
+        });
         toast({ title: "SMS Received!", description: `OTP Code: ${data.otpCode}` });
       } else if (data.status === "received") {
         toast({ title: "SMS Received!", description: "Message found — check below" });

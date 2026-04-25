@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { Moon, Sun, Eye, EyeOff } from "lucide-react";
 import { HCaptchaField } from "@/components/HCaptchaField";
+import { trackEvent } from "@/lib/analytics";
 
 export default function Register() {
   const [username, setUsername] = useState("");
@@ -41,6 +42,7 @@ export default function Register() {
     setLoading(true);
     try {
       await register(username, email, password, captchaToken || undefined);
+      trackEvent("register", { method: "email" });
       window.location.assign("/verify-email");
     } catch (err: any) {
       toast({ title: "Registration failed", description: err.message || "Something went wrong", variant: "destructive" });

@@ -68,6 +68,16 @@ Use package scripts from `package.json`:
   - `APP_BASE_URL` - public app origin used to generate reset/verification links.
 - Frontend:
   - `VITE_HCAPTCHA_SITE_KEY` - public site key used to render hCaptcha on `/login` and `/register`.
+  - `VITE_PLAUSIBLE_DOMAIN` - domain configured in Plausible (example: `getotps.online`).
+  - `VITE_PLAUSIBLE_SRC` - optional custom script URL for self-hosted Plausible (default: `https://plausible.io/js/script.js`).
+
+## Analytics Events
+
+- Plausible script is loaded in `client/index.html` when `VITE_PLAUSIBLE_DOMAIN` is defined.
+- Funnel events emitted from client:
+  - `register` - successful account registration.
+  - `topup` - successful deposit confirmation.
+  - `first_otp` - first OTP received in active numbers flow.
 
 ## Testing Expectations
 
