@@ -1756,7 +1756,7 @@ export async function registerRoutes(
     // SEO: robots.txt
   app.get("/robots.txt", (_req, res) => {
     res.type("text/plain");
-    res.send(`User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /#/dashboard\nDisallow: /#/admin\nDisallow: /#/profile\n\nSitemap: https://getotps.online/sitemap.xml`);
+    res.send(`User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /dashboard\nDisallow: /admin\nDisallow: /profile\n\nSitemap: https://getotps.online/sitemap.xml`);
   });
 
   // SEO: sitemap.xml
@@ -1766,8 +1766,13 @@ export async function registerRoutes(
       const serviceNames = services.map((s: any) => s.name || s);
       let urls = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
       urls += `  <url><loc>https://getotps.online/</loc><priority>1.0</priority></url>\n`;
-      urls += `  <url><loc>https://getotps.online/#/login</loc><priority>0.5</priority></url>\n`;
-      urls += `  <url><loc>https://getotps.online/#/register</loc><priority>0.5</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/login</loc><priority>0.5</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/register</loc><priority>0.5</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/services</loc><priority>0.7</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/pricing</loc><priority>0.7</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/privacy</loc><priority>0.4</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/terms</loc><priority>0.4</priority></url>\n`;
+      urls += `  <url><loc>https://getotps.online/refund</loc><priority>0.4</priority></url>\n`;
       for (const svc of serviceNames) {
         urls += `  <url><loc>https://getotps.online/buy?service=${encodeURIComponent(svc)}</loc><priority>0.6</priority></url>\n`;
       }

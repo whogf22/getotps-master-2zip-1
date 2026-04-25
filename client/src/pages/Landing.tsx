@@ -94,6 +94,19 @@ const FAQS = [
   { q: "Which services are supported?", a: "We support 500+ services including WhatsApp, Telegram, Google, TikTok, Binance, Discord, Facebook, Instagram, and many more." },
 ];
 
+const FAQ_JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: FAQS.map((faq) => ({
+    "@type": "Question",
+    name: faq.q,
+    acceptedAnswer: {
+      "@type": "Answer",
+      text: faq.a,
+    },
+  })),
+};
+
 function DashboardPanel() {
   const [tab, setTab] = useState(0);
   const [tick, setTick] = useState(0);
@@ -220,6 +233,25 @@ export default function Landing() {
   const { data: countryStockMap = {} } = useQuery<Record<string, number>>({
     queryKey: ["/api/country-stock"],
   });
+
+  useEffect(() => {
+    const id = "landing-faq-jsonld";
+    let script = document.getElementById(id) as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement("script");
+      script.id = id;
+      script.type = "application/ld+json";
+      document.head.appendChild(script);
+    }
+    script.textContent = JSON.stringify(FAQ_JSON_LD);
+
+    return () => {
+      const existing = document.getElementById(id);
+      if (existing) {
+        existing.remove();
+      }
+    };
+  }, []);
 
   return (
     <div className="landing">
