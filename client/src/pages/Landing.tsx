@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
+import { FooterContactForm } from "@/components/FooterContactForm";
 import {
   Zap, Shield, Globe, ArrowRight, Star, Lock,
   ChevronDown, CheckCircle, Cpu, Key, RefreshCw,
@@ -494,8 +495,23 @@ export default function Landing() {
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-8 mb-10">
             <div><Logo size={26} /><p className="l-footer-desc">Virtual numbers for OTP verification & number rental worldwide.</p></div>
             <div><p className="l-footer-heading">Product</p>{[["Receive OTP", "platforms"], ["Rent Number", "platforms"], ["API", "how-it-works"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
-            <div><p className="l-footer-heading">Resources</p>{[["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
+            <div>
+              <p className="l-footer-heading">Resources</p>
+              {[["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}
+              <a
+                href="https://t.me/getotps_support"
+                target="_blank"
+                rel="noreferrer"
+                className="l-footer-link"
+              >
+                Telegram Support
+              </a>
+            </div>
             <div><p className="l-footer-heading">Legal</p>{["Privacy Policy", "Terms of Service", "Refund Policy"].map(l => <a key={l} href="#" className="l-footer-link">{l}</a>)}</div>
+          </div>
+          <div className="mb-10">
+            <p className="l-footer-heading">Contact Us</p>
+            <FooterContactForm />
           </div>
           <div className="l-footer-bottom">
             <p>&copy; {new Date().getFullYear()} GetOTPs. All rights reserved.</p>

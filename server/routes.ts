@@ -73,6 +73,10 @@ function safeError(err: any): string {
   return err?.message || "Unknown error";
 }
 
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 async function syncProxnumServices(): Promise<void> {
   try {
     const apiServices = await getCachedServices();
@@ -341,6 +345,37 @@ export async function registerRoutes(
     if (!freshUser) return res.status(404).json({ message: "User not found" });
     const { password: _, apiKey: __, ...safeUser } = freshUser;
     res.json(safeUser);
+  });
+
+  app.post("/api/contact", async (req, res) => {
+    try {
+      const { name, email, message } = req.body ?? {};
+      const normalizedName = typeof name === "string" ? name.trim() : "";
+      const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const normalizedMessage = typeof message === "string" ? message.trim() : "";
+
+      if (!normalizedName || !normalizedEmail || !normalizedMessage) {
+        return res.status(400).json({ message: "Name, email, and message are required." });
+      }
+
+      if (!isValidEmail(normalizedEmail)) {
+        return res.status(400).json({ message: "Please provide a valid email address." });
+      }
+
+      if (normalizedMessage.length < 10 || normalizedMessage.length > 2000) {
+        return res.status(400).json({ message: "Message must be between 10 and 2000 characters." });
+      }
+
+      console.log(
+        `[contact] ${new Date().toISOString()} name="${normalizedName}" email="${normalizedEmail}" length=${normalizedMessage.length}`,
+      );
+
+      res.status(202).json({
+        message: "Thanks for reaching out. Our support team will reply soon.",
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: safeError(err) });
+    }
   });
 
   // ========== SERVICES (Proxnum-backed) ==========
