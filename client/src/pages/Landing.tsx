@@ -226,7 +226,8 @@ export default function Landing() {
         <div className="l-nav-inner">
           <Logo size={30} />
           <nav className="l-nav-links">
-            {[["Services", "platforms"], ["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([label, id]) => (
+            <Link href="/services"><a className="l-nav-link">Services</a></Link>
+            {[["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([label, id]) => (
               <button key={id} onClick={() => go(id)} className="l-nav-link">{label}</button>
             ))}
           </nav>
@@ -271,7 +272,7 @@ export default function Landing() {
 
             <div className="l-hero-ctas">
               <Link href="/register"><button className="l-btn-primary">Get Number Now <ArrowRight className="w-5 h-5" /></button></Link>
-              <button className="l-btn-glass" onClick={() => go("platforms")}>View Services</button>
+                  <button className="l-btn-glass" onClick={() => navigate("/services")}>View Services</button>
             </div>
 
             <div className="l-hero-pills">
@@ -361,7 +362,7 @@ export default function Landing() {
               </Reveal>
             ))}
           </div>
-          <Reveal><div className="text-center"><Link href="/register"><button className="l-btn-outline">Browse All 500+ Services <ArrowRight className="w-4 h-4" /></button></Link></div></Reveal>
+          <Reveal><div className="text-center"><Link href="/services"><button className="l-btn-outline">Browse All 500+ Services <ArrowRight className="w-4 h-4" /></button></Link></div></Reveal>
         </div>
       </section>
 
@@ -524,7 +525,7 @@ export default function Landing() {
                 <p className="l-final-sub">Join thousands verifying accounts without exposing their real number.</p>
                 <div className="l-hero-ctas justify-center">
                   <Link href="/register"><button className="l-btn-primary">Create Free Account <ArrowRight className="w-5 h-5" /></button></Link>
-                  <button className="l-btn-glass" onClick={() => go("platforms")}>Browse Services</button>
+                  <button className="l-btn-glass" onClick={() => navigate("/services")}>Browse Services</button>
                 </div>
                 <p className="l-final-note">No credit card · Pay per use · Cancel anytime</p>
               </div>
@@ -538,7 +539,12 @@ export default function Landing() {
         <div className="l-container">
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-8 mb-10">
             <div><Logo size={26} /><p className="l-footer-desc">Virtual numbers for OTP verification & number rental worldwide.</p></div>
-            <div><p className="l-footer-heading">Product</p>{[["Receive OTP", "platforms"], ["Rent Number", "platforms"], ["API", "how-it-works"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
+            <div>
+              <p className="l-footer-heading">Product</p>
+              <Link href="/services"><a className="l-footer-link">Receive OTP</a></Link>
+              <Link href="/services"><a className="l-footer-link">Rent Number</a></Link>
+              <button onClick={() => go("how-it-works")} className="l-footer-link">API</button>
+            </div>
             <div><p className="l-footer-heading">Resources</p>{[["How It Works", "how-it-works"], ["FAQ", "faq"]].map(([l, id]) => <button key={l} onClick={() => go(id)} className="l-footer-link">{l}</button>)}</div>
             <div>
               <p className="l-footer-heading">Legal</p>

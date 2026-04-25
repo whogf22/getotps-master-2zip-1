@@ -21,6 +21,7 @@ import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import TermsOfService from "@/pages/TermsOfService";
 import RefundPolicy from "@/pages/RefundPolicy";
 import Pricing from "@/pages/Pricing";
+import Services from "@/pages/Services";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminUsers from "@/pages/AdminUsers";
 import AdminDeposits from "@/pages/AdminDeposits";
@@ -93,6 +94,7 @@ function AppRouter() {
       <Route path="/terms" component={TermsOfService} />
       <Route path="/refund" component={RefundPolicy} />
       <Route path="/pricing" component={Pricing} />
+      <Route path="/services" component={Services} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/buy" component={() => <ProtectedRoute component={BuyNumber} />} />
       <Route path="/active" component={() => <ProtectedRoute component={ActiveNumbers} />} />
