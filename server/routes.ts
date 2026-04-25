@@ -645,7 +645,7 @@ export async function registerRoutes(
 
   // ========== RENTALS (Proxnum rental numbers) ==========
 
-  app.post("/api/rentals", requireAuth, async (req, res) => {
+  app.post("/api/rentals", requireAuth, orderLimiter, async (req, res) => {
     try {
       const user = req.user as any;
       const { serviceId, serviceName, country, days } = req.body;
@@ -890,7 +890,7 @@ export async function registerRoutes(
   });
 
   // Simulate confirm — for demo/testing (user-side, only works on own deposits)
-  app.post("/api/crypto/:id/simulate-confirm", requireAuth, async (req, res) => {
+  app.post("/api/crypto/:id/simulate-confirm", requireAuth, async (req, res) => { if (process.env.NODE_ENV === "production") return res.status(404).json({ message: "Not found" });
     try {
       const user = req.user as any;
       const deposit = await storage.getCryptoDeposit(Number(req.params.id));
