@@ -8,7 +8,7 @@ import {
   ChevronDown, CheckCircle, Cpu, Key, RefreshCw,
   Wifi, Server, Sparkles, Eye
 } from "lucide-react";
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense, lazy } from "react";
 
 function useReveal() {
   const ref = useRef<HTMLDivElement>(null);
@@ -94,86 +94,14 @@ const FAQS = [
   { q: "Which services are supported?", a: "We support 500+ services including WhatsApp, Telegram, Google, TikTok, Binance, Discord, Facebook, Instagram, and many more." },
 ];
 
-function DashboardPanel() {
-  const [tab, setTab] = useState(0);
-  const [tick, setTick] = useState(0);
-  useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 3000); return () => clearInterval(t); }, []);
-  const tabs = ["OTP Inbox", "Rentals", "History"];
+const DashboardPanel = lazy(() => import("@/components/landing/DashboardPanel"));
 
+function DashboardPanelFallback() {
   return (
-    <div className="dash-panel">
+    <div className="dash-panel animate-pulse" aria-hidden="true">
       <div className="dash-chrome">
         <div className="dash-dots"><span /><span /><span /></div>
-        <div className="dash-url">getotps.online/dashboard</div>
-      </div>
-      <div className="dash-header">
-        <div className="dash-logo"><div className="dash-logo-dot" /><span>GetOTPs</span><span className="dash-pro">Pro</span></div>
-        <div className="dash-bal"><span className="dash-bal-l">Wallet</span><span className="dash-bal-v">Active</span></div>
-      </div>
-      <div className="dash-tabs">
-        {tabs.map((t, i) => (
-          <button key={t} className={`dash-tab ${tab === i ? "dash-tab-on" : ""}`} onClick={() => setTab(i)}>
-            {t}{i === 0 && <span className="dash-tab-live" />}
-          </button>
-        ))}
-      </div>
-      <div className="dash-body">
-        {tab === 0 && (
-          <>
-            {[
-              { svc: "WhatsApp", code: "847 291", time: "2s ago", st: "received", cl: "#25d366" },
-              { svc: "Telegram", code: "563 018", time: "1m ago", st: "received", cl: "#0088cc" },
-              { svc: "Google", code: "391 752", time: "3m ago", st: "received", cl: "#4285f4" },
-            ].map((r, i) => (
-              <div key={i} className="dash-row">
-                <span className="dash-row-svc" style={{ color: r.cl }}>{r.svc}</span>
-                <span className="dash-row-code">{r.code}</span>
-                <span className="dash-row-time">{r.time}</span>
-                <span className="dash-row-st dash-st-ok">{r.st}</span>
-              </div>
-            ))}
-            {tick % 2 === 0 && (
-              <div className="dash-row dash-row-live">
-                <span className="dash-row-svc" style={{ color: "#f3ba2f" }}>Binance</span>
-                <span className="dash-row-code"><span className="dash-blink">●</span> Waiting…</span>
-                <span className="dash-row-time">now</span>
-                <span className="dash-row-st dash-st-wait">pending</span>
-              </div>
-            )}
-          </>
-        )}
-        {tab === 1 && (
-          <>
-            {[
-              { num: "+1 (555) 832-4910", svc: "WhatsApp", exp: "18:42", on: true },
-              { num: "+1 (555) 217-0381", svc: "Binance", exp: "04:12", on: true },
-              { num: "+44 7911 123456", svc: "Telegram", exp: "Expired", on: false },
-            ].map((r, i) => (
-              <div key={i} className={`dash-row ${!r.on ? "dash-row-dim" : ""}`}>
-                <span className="dash-row-num">{r.num}</span>
-                <span className="dash-row-svc" style={{ color: "#22d3ee", fontSize: "10px" }}>{r.svc}</span>
-                <span className={`dash-row-time ${r.on ? "text-emerald-400" : ""}`}>{r.on ? `⏱ ${r.exp}` : r.exp}</span>
-                <span className={`dash-row-st ${r.on ? "dash-st-ok" : "dash-st-exp"}`}>{r.on ? "active" : "expired"}</span>
-              </div>
-            ))}
-          </>
-        )}
-        {tab === 2 && (
-          <>
-            {[
-              { svc: "WhatsApp", type: "OTP", amt: "Completed", time: "14:22" },
-              { svc: "Telegram", type: "Rental", amt: "Completed", time: "13:08" },
-              { svc: "TikTok", type: "Refund", amt: "Refunded", time: "12:05" },
-            ].map((r, i) => (
-              <div key={i} className="dash-row">
-                <span className="dash-row-svc" style={{ color: "#22d3ee" }}>{r.svc}</span>
-                <span className="dash-row-code" style={{ fontSize: "10px", opacity: 0.5 }}>{r.type}</span>
-                <span className="dash-row-time">{r.time}</span>
-                <span className={r.amt === "Refunded" ? "text-emerald-400 text-[11px] font-bold" : "text-cyan-400/60 text-[11px] font-bold"}>{r.amt}</span>
-              </div>
-            ))}
-          </>
-        )}
+        <div className="dash-url">loading dashboard...</div>
       </div>
     </div>
   );
@@ -272,7 +200,9 @@ export default function Landing() {
           </div>
 
           <div className="l-hero-right" style={{ transform: `translate(${mx * 6}px, ${my * 4}px)` }}>
-            <DashboardPanel />
+            <Suspense fallback={<DashboardPanelFallback />}>
+              <DashboardPanel />
+            </Suspense>
           </div>
         </div>
 
@@ -391,7 +321,9 @@ export default function Landing() {
             <Reveal delay={150}>
               <div className="l-dash-wrap">
                 <div className="l-dash-glow" />
-                <DashboardPanel />
+                <Suspense fallback={<DashboardPanelFallback />}>
+                  <DashboardPanel />
+                </Suspense>
               </div>
             </Reveal>
           </div>
