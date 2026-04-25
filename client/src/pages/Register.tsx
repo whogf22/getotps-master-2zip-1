@@ -119,13 +119,13 @@ export default function Register() {
                   </button>
                 </div>
               </div>
+              <div className="space-y-1 pt-1">
+                <p className="text-xs text-muted-foreground">Security verification</p>
+                <HCaptchaField onTokenChange={setCaptchaToken} resetSignal={captchaResetSignal} />
+              </div>
               <Button type="submit" className="w-full" disabled={loading} data-testid="button-submit-register">
                 {loading ? "Creating account..." : "Create Account"}
               </Button>
-
-              <div className="pt-1">
-                <HCaptchaField onTokenChange={setCaptchaToken} resetSignal={captchaResetSignal} />
-              </div>
             </form>
 
             <div className="mt-5 text-center">

@@ -17,12 +17,15 @@ export function HCaptchaField({ onTokenChange, resetSignal = 0 }: HCaptchaFieldP
   }
 
   return (
-    <HCaptcha
-      key={resetSignal}
-      sitekey={siteKey}
-      onVerify={(token) => onTokenChange(token)}
-      onExpire={() => onTokenChange(null)}
-      onError={() => onTokenChange(null)}
-    />
+    <div className="rounded-xl border border-border bg-background/40 p-3" data-testid="hcaptcha-widget-container">
+      <p className="mb-2 text-xs text-muted-foreground">Complete the security check to continue.</p>
+      <HCaptcha
+        key={resetSignal}
+        sitekey={siteKey}
+        onVerify={(token) => onTokenChange(token)}
+        onExpire={() => onTokenChange(null)}
+        onError={() => onTokenChange(null)}
+      />
+    </div>
   );
 }
