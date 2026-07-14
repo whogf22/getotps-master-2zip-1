@@ -13,15 +13,29 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import net from "node:net";
 
 const require = createRequire(import.meta.url);
 const Database = require("better-sqlite3");
 
-const PORT = 5099;
-const BASE = `http://localhost:${PORT}`;
+// Dynamically selected free port avoids collisions on CI / re-runs.
+let PORT;
+let BASE;
 const ADMIN_EMAIL = "admin@getotps.online";
 const ADMIN_PASSWORD = "concurrencyTestAdmin";
 const tmp = mkdtempSync(join(tmpdir(), "getotps-conc-"));
+
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
 const DB_PATH = join(tmp, "test.db");
 
 let failures = 0;
@@ -168,6 +182,9 @@ async function run() {
   console.log(`\n${failures === 0 ? "ALL CONCURRENCY TESTS PASSED" : failures + " ASSERTION(S) FAILED"}`);
 }
 
+PORT = await getFreePort();
+BASE = `http://localhost:${PORT}`;
+
 const server = spawn("npx", ["tsx", "server/index.ts"], {
   env: {
     ...process.env,
@@ -177,7 +194,11 @@ const server = spawn("npx", ["tsx", "server/index.ts"], {
     SESSION_SECRET: "concurrency-test-secret",
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
+    // Self-contained + secret-free: no real .env, provider key, or wallet
+    // secret. A dummy wallet address makes the BTC deposit path usable so the
+    // test never depends on a committed .env or real crypto-wallet config.
     PROXNUM_API_KEY: "",
+    CRYPTO_WALLET_BTC: "TEST_ONLY_BTC_WALLET_ADDRESS",
   },
   stdio: "ignore",
   // Own process group so we can kill npx + tsx + node together (npx does not
