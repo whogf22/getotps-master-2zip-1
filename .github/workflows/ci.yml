@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least-privilege token: CI only needs to read the repository.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref when new commits arrive.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Type-check, build & concurrency tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Deterministic, secret-free run. The concurrency test spawns its own
+      # server against a throwaway temp SQLite DB and needs no real credentials.
+      CI: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run check
+
+      - name: Production build
+        run: npm run build
+
+      - name: Atomic concurrency tests
+        run: npm run test:concurrency

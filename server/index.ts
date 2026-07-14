@@ -9,18 +9,20 @@ const app = express();
 const httpServer = createServer(app);
 const isProduction = process.env.NODE_ENV === "production";
 
+// Canonical public origin, used for production CORS. Overridable via APP_URL.
+const APP_ORIGIN = process.env.APP_URL || "https://getotps.online";
+
 // ── Security Headers ──────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      // NOTE: Remove 'unsafe-inline' once Vite build uses hashed scripts.
-      // For now keep it so the bundled inline bootstrap script works.
-      // TODO: switch to nonce-based CSP after migrating to SSR or chunked build.
+      // NOTE: 'unsafe-inline' is required for the Vite bundled bootstrap script.
+      // Revisit with a nonce-based CSP once the build emits hashed inline scripts.
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      // Allow service icons from Wikipedia + ui-avatars (used by /api/services)
+      // Service icons come from Wikipedia + ui-avatars (used by /api/services).
       imgSrc: ["'self'", "data:", "https://upload.wikimedia.org", "https://ui-avatars.com", "https:"],
       connectSrc: ["'self'", "wss:", "ws:"],
       frameSrc: ["'none'"],
@@ -29,23 +31,32 @@ app.use(helmet({
       formAction: ["'self'"],
       frameAncestors: ["'none'"],
       scriptSrcAttr: ["'none'"],
-      upgradeInsecureRequests: isProduction ? [] : undefined,
+      // Enable HTTPS upgrade only in production. `null` disables the helmet
+      // default in dev so plain-HTTP localhost is not force-upgraded.
+      upgradeInsecureRequests: isProduction ? [] : null,
     },
   },
   referrerPolicy: { policy: "strict-origin-when-cross-origin" },
   frameguard: { action: "deny" },
   hsts: isProduction ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
-  crossOriginEmbedderPolicy: false, // allow Wikipedia icons
+  crossOriginEmbedderPolicy: false, // allow cross-origin service icons
 }));
 
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
-  // CORS — only allow same origin for API. Cloudflare handles CDN.
-  res.setHeader("Access-Control-Allow-Origin", isProduction ? "https://getotps.online" : "*");
+  // CORS — credentials are used, so we must never pair them with a wildcard origin.
+  // Production: pin to the canonical origin. Development: reflect the caller.
+  if (isProduction) {
+    res.setHeader("Access-Control-Allow-Origin", APP_ORIGIN);
+    res.setHeader("Vary", "Origin");
+  } else if (req.headers.origin) {
+    res.setHeader("Access-Control-Allow-Origin", req.headers.origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key");
   res.setHeader("Access-Control-Allow-Credentials", "true");
-  if (_req.method === "OPTIONS") return res.status(204).end();
+  if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
 
@@ -92,6 +103,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      // Response bodies may contain sensitive data, so only echo them in dev.
       if (capturedJsonResponse && process.env.NODE_ENV !== "production") {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse).slice(0, 200)}`;
       }
@@ -120,6 +132,9 @@ app.use((req, res, next) => {
     return res.status(status).json({ message });
   });
 
+  // importantly only setup vite in development and after
+  // setting up all the other routes so the catch-all route
+  // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
@@ -127,6 +142,7 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
+  // ALWAYS serve on the PORT env var (default 5000). This serves both API + client.
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(
     {
@@ -138,4 +154,17 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  // Graceful shutdown so in-flight requests can finish on deploy/restart.
+  const shutdown = (signal: string) => {
+    log(`Received ${signal}, shutting down gracefully...`);
+    httpServer.close(() => {
+      log("HTTP server closed.");
+      process.exit(0);
+    });
+    // Safety net: force-exit if connections do not drain in time.
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 })();

@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   motion, useInView, useScroll, useTransform,
-  AnimatePresence, useMotionValue, useSpring, animate
+  AnimatePresence, useMotionValue, useSpring, animate,
+  type Variants
 } from "framer-motion";
 import {
   Zap, Shield, Globe, ArrowRight, Lock, ChevronDown,
@@ -34,7 +35,7 @@ const prefersReducedMotion =
   typeof window !== "undefined" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-const fadeUp = prefersReducedMotion
+const fadeUp: Variants = prefersReducedMotion
   ? {}
   : { hidden: { opacity: 0, y: 24 }, show: { opacity: 1, y: 0 } };
 
