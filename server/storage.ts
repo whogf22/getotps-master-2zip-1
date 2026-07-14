@@ -10,9 +10,22 @@ import {
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, desc, or } from "drizzle-orm";
+import { eq, and, desc, or, inArray } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+
+// ── Money helpers ────────────────────────────────────────────────────────────
+// Balances/amounts are stored as fixed 2-decimal strings. Do all arithmetic in
+// integer cents to avoid floating-point accumulation errors.
+export function toCents(value: string | number): number {
+  const n = typeof value === "number" ? value : parseFloat(value);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.round(n * 100);
+}
+
+export function centsToStr(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
 
 // Honor DATABASE_URL when provided (default keeps the existing ./data.db file).
 // Never point this at an ephemeral build dir — the SQLite file must persist.
@@ -222,6 +235,18 @@ export interface IStorage {
   getUserCryptoDeposits(userId: number): Promise<CryptoDeposit[]>;
   updateCryptoDeposit(id: number, data: Partial<CryptoDeposit>): Promise<void>;
   getAllPendingCryptoDeposits(): Promise<CryptoDeposit[]>;
+
+  // ── Atomic financial operations ─────────────────────────────────────────────
+  // These run synchronously inside a single better-sqlite3 transaction. The
+  // conditional status transition + balance mutation cannot interleave with
+  // another request, so a deposit is credited/refunded at most once.
+  confirmCryptoDepositAtomic(depositId: number, expectedUserId: number | null, descriptionSuffix: string): { result: "credited" | "already"; newBalance?: string };
+  rejectCryptoDepositAtomic(depositId: number): { result: "rejected" | "already" };
+  cancelOrderWithRefundAtomic(orderId: number): { result: "refunded" | "already"; newBalance?: string };
+  cancelRentalAtomic(rentalId: number): { result: "cancelled" | "already" };
+  addUserBalanceAtomic(userId: number, amount: string, description: string): { result: "ok" | "user_not_found"; newBalance?: string };
+  createOrderWithDebitAtomic(userId: number, price: string, order: InsertOrder, description: string): { result: "ok"; order: Order; newBalance: string } | { result: "insufficient" } | { result: "user_not_found" };
+  createRentalWithDebitAtomic(userId: number, price: string, rental: InsertRental, description: string): { result: "ok"; rental: Rental; newBalance: string } | { result: "insufficient" } | { result: "user_not_found" };
 }
 
 export class DatabaseStorage implements IStorage {
@@ -452,6 +477,175 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(cryptoDeposits).where(
       or(eq(cryptoDeposits.status, "pending"), eq(cryptoDeposits.status, "confirming"))
     ).orderBy(desc(cryptoDeposits.id)).all();
+  }
+
+  // ── Atomic financial operations ─────────────────────────────────────────────
+
+  confirmCryptoDepositAtomic(
+    depositId: number,
+    expectedUserId: number | null,
+    descriptionSuffix: string,
+  ): { result: "credited" | "already"; newBalance?: string } {
+    const now = new Date().toISOString();
+    const run = sqlite.transaction(() => {
+      // Conditional terminal transition: only a pending/confirming deposit can be
+      // completed. A concurrent request sees status="completed" -> 0 rows changed.
+      const conds = [
+        eq(cryptoDeposits.id, depositId),
+        inArray(cryptoDeposits.status, ["pending", "confirming"]),
+      ];
+      if (expectedUserId != null) conds.push(eq(cryptoDeposits.userId, expectedUserId));
+      const upd = db.update(cryptoDeposits)
+        .set({ status: "completed", completedAt: now })
+        .where(and(...conds))
+        .run();
+      if (upd.changes !== 1) return { result: "already" as const };
+
+      // Read the AUTHORITATIVE amount from the stored record (never the client).
+      const dep = db.select().from(cryptoDeposits).where(eq(cryptoDeposits.id, depositId)).get()!;
+      const user = db.select().from(users).where(eq(users.id, dep.userId)).get();
+      if (!user) return { result: "credited" as const };
+      const newBalance = centsToStr(toCents(user.balance) + toCents(dep.amount));
+      db.update(users).set({ balance: newBalance }).where(eq(users.id, dep.userId)).run();
+      db.insert(transactions).values({
+        userId: dep.userId, type: "deposit", amount: dep.amount,
+        description: `Crypto deposit (${dep.currency})${descriptionSuffix}`,
+        orderId: null, stripeSessionId: null, createdAt: now,
+      }).run();
+      return { result: "credited" as const, newBalance };
+    });
+    return run();
+  }
+
+  rejectCryptoDepositAtomic(depositId: number): { result: "rejected" | "already" } {
+    const now = new Date().toISOString();
+    const run = sqlite.transaction(() => {
+      const upd = db.update(cryptoDeposits)
+        .set({ status: "rejected", completedAt: now })
+        .where(and(
+          eq(cryptoDeposits.id, depositId),
+          inArray(cryptoDeposits.status, ["pending", "confirming"]),
+        ))
+        .run();
+      return { result: (upd.changes === 1 ? "rejected" : "already") as "rejected" | "already" };
+    });
+    return run();
+  }
+
+  cancelOrderWithRefundAtomic(orderId: number): { result: "refunded" | "already"; newBalance?: string } {
+    const now = new Date().toISOString();
+    const run = sqlite.transaction(() => {
+      // Only a pending/waiting order can be cancelled, so the refund runs once.
+      const upd = db.update(orders)
+        .set({ status: "cancelled", completedAt: now })
+        .where(and(
+          eq(orders.id, orderId),
+          inArray(orders.status, ["pending", "waiting"]),
+        ))
+        .run();
+      if (upd.changes !== 1) return { result: "already" as const };
+
+      const ord = db.select().from(orders).where(eq(orders.id, orderId)).get()!;
+      const user = db.select().from(users).where(eq(users.id, ord.userId)).get();
+      if (!user) return { result: "refunded" as const };
+      const newBalance = centsToStr(toCents(user.balance) + toCents(ord.price));
+      db.update(users).set({ balance: newBalance }).where(eq(users.id, ord.userId)).run();
+      db.insert(transactions).values({
+        userId: ord.userId, type: "refund", amount: ord.price,
+        description: "Order cancelled - refund", orderId: ord.id,
+        stripeSessionId: null, createdAt: now,
+      }).run();
+      return { result: "refunded" as const, newBalance };
+    });
+    return run();
+  }
+
+  cancelRentalAtomic(rentalId: number): { result: "cancelled" | "already" } {
+    const now = new Date().toISOString();
+    const run = sqlite.transaction(() => {
+      const upd = db.update(rentals)
+        .set({ status: "cancelled", cancelledAt: now })
+        .where(and(eq(rentals.id, rentalId), eq(rentals.status, "active")))
+        .run();
+      return { result: (upd.changes === 1 ? "cancelled" : "already") as "cancelled" | "already" };
+    });
+    return run();
+  }
+
+  addUserBalanceAtomic(
+    userId: number,
+    amount: string,
+    description: string,
+  ): { result: "ok" | "user_not_found"; newBalance?: string } {
+    const now = new Date().toISOString();
+    const run = sqlite.transaction(() => {
+      // Atomic read-modify-write prevents lost updates under concurrency.
+      const user = db.select().from(users).where(eq(users.id, userId)).get();
+      if (!user) return { result: "user_not_found" as const };
+      const newBalance = centsToStr(toCents(user.balance) + toCents(amount));
+      db.update(users).set({ balance: newBalance }).where(eq(users.id, userId)).run();
+      db.insert(transactions).values({
+        userId, type: "deposit", amount, description,
+        orderId: null, stripeSessionId: null, createdAt: now,
+      }).run();
+      return { result: "ok" as const, newBalance };
+    });
+    return run();
+  }
+
+  createOrderWithDebitAtomic(
+    userId: number,
+    price: string,
+    order: InsertOrder,
+    description: string,
+  ): { result: "ok"; order: Order; newBalance: string } | { result: "insufficient" } | { result: "user_not_found" } {
+    const now = order.createdAt || new Date().toISOString();
+    const run = sqlite.transaction(() => {
+      const user = db.select().from(users).where(eq(users.id, userId)).get();
+      if (!user) return { result: "user_not_found" as const };
+      const balCents = toCents(user.balance);
+      const priceCents = toCents(price);
+      // Conditional debit: never let concurrent purchases drive the balance negative.
+      if (!Number.isFinite(balCents) || !Number.isFinite(priceCents) || balCents < priceCents) {
+        return { result: "insufficient" as const };
+      }
+      const newBalance = centsToStr(balCents - priceCents);
+      db.update(users).set({ balance: newBalance }).where(eq(users.id, userId)).run();
+      const created = db.insert(orders).values(order).returning().get();
+      db.insert(transactions).values({
+        userId, type: "purchase", amount: `-${price}`,
+        description, orderId: created.id, stripeSessionId: null, createdAt: now,
+      }).run();
+      return { result: "ok" as const, order: created, newBalance };
+    });
+    return run();
+  }
+
+  createRentalWithDebitAtomic(
+    userId: number,
+    price: string,
+    rental: InsertRental,
+    description: string,
+  ): { result: "ok"; rental: Rental; newBalance: string } | { result: "insufficient" } | { result: "user_not_found" } {
+    const now = rental.createdAt || new Date().toISOString();
+    const run = sqlite.transaction(() => {
+      const user = db.select().from(users).where(eq(users.id, userId)).get();
+      if (!user) return { result: "user_not_found" as const };
+      const balCents = toCents(user.balance);
+      const priceCents = toCents(price);
+      if (!Number.isFinite(balCents) || !Number.isFinite(priceCents) || balCents < priceCents) {
+        return { result: "insufficient" as const };
+      }
+      const newBalance = centsToStr(balCents - priceCents);
+      db.update(users).set({ balance: newBalance }).where(eq(users.id, userId)).run();
+      const created = db.insert(rentals).values(rental).returning().get();
+      db.insert(transactions).values({
+        userId, type: "purchase", amount: `-${price}`,
+        description, orderId: created.id, stripeSessionId: null, createdAt: now,
+      }).run();
+      return { result: "ok" as const, rental: created, newBalance };
+    });
+    return run();
   }
 }
 

@@ -483,41 +483,41 @@ export async function registerRoutes(
       }
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const chargePrice = parseFloat(service.price);
-      const newBalance = (balance - chargePrice).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
-
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 20 * 60 * 1000);
-
-      const order = await storage.createOrder({
-        userId: user.id,
-        serviceId: service.id,
-        serviceName: service.name,
-        phoneNumber: formattedPhone,
-        status: "pending",
-        otpCode: null,
-        smsMessages: null,
-        price: service.price,
-        country: resolvedCountry,
-        proxnumId,
-        createdAt: now.toISOString(),
-        expiresAt: expiresAt.toISOString(),
-        completedAt: null,
-      });
-
       const costNote = amountPaid != null ? ` (provider cost: $${amountPaid.toFixed(6)})` : "";
-      await storage.createTransaction({
-        userId: user.id,
-        type: "purchase",
-        amount: `-${service.price}`,
-        description: `${service.name} OTP number${costNote}`,
-        orderId: order.id,
-        stripeSessionId: null,
-        createdAt: now.toISOString(),
-      });
 
-      res.json({ ...order, service });
+      // Atomic conditional debit + order creation. The DB layer refuses to let
+      // concurrent purchases drive the balance negative (no overspend/lost update).
+      const outcome = storage.createOrderWithDebitAtomic(
+        user.id,
+        service.price,
+        {
+          userId: user.id,
+          serviceId: service.id,
+          serviceName: service.name,
+          phoneNumber: formattedPhone,
+          status: "pending",
+          otpCode: null,
+          smsMessages: null,
+          price: service.price,
+          country: resolvedCountry,
+          proxnumId,
+          createdAt: now.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          completedAt: null,
+        },
+        `${service.name} OTP number${costNote}`,
+      );
+
+      if (outcome.result !== "ok") {
+        // We already provisioned a number; release it so provider cost isn't leaked.
+        if (proxnumId) { try { await proxnumApi.cancelVirtual(proxnumId); } catch (e) {} }
+        if (outcome.result === "insufficient") return res.status(400).json({ message: "Insufficient balance" });
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({ ...outcome.order, service });
     } catch (err: any) {
       console.error("Order error:", err);
       res.status(500).json({ message: safeError(err) });
@@ -636,24 +636,14 @@ export async function registerRoutes(
         }
       }
 
-      await storage.cancelOrder(order.id);
-
-      const freshUser = await storage.getUser(user.id);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(order.price)).toFixed(2);
-        await storage.updateUserBalance(user.id, newBalance);
-        await storage.createTransaction({
-          userId: user.id,
-          type: "refund",
-          amount: order.price,
-          description: "Order cancelled - refund",
-          orderId: order.id,
-          stripeSessionId: null,
-          createdAt: new Date().toISOString(),
-        });
+      // Atomic conditional cancel + refund — the refund credit runs at most once
+      // even if two cancel requests arrive simultaneously.
+      const outcome = storage.cancelOrderWithRefundAtomic(order.id);
+      if (outcome.result === "already") {
+        return res.status(409).json({ message: "Order already cancelled" });
       }
 
-      res.json({ message: "Order cancelled and refunded" });
+      res.json({ message: "Order cancelled and refunded", newBalance: outcome.newBalance });
     } catch (err: any) {
       res.status(500).json({ message: safeError(err) });
     }
@@ -750,38 +740,37 @@ export async function registerRoutes(
       }
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const newBalance = (balance - finalPrice).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
-
       const now = new Date();
       const expiresAt = new Date(now.getTime() + rentalDays * 24 * 60 * 60 * 1000);
+      const priceStr = finalPrice.toFixed(2);
 
-      const rental = await storage.createRental({
-        userId: user.id,
-        serviceId: service.id,
-        serviceName: service.name,
-        phoneNumber: formattedPhone,
-        status: "active",
-        price: finalPrice.toFixed(2),
-        country: rentalCountry,
-        days: rentalDays,
-        proxnumId,
-        createdAt: now.toISOString(),
-        expiresAt: expiresAt.toISOString(),
-        cancelledAt: null,
-      });
+      const outcome = storage.createRentalWithDebitAtomic(
+        user.id,
+        priceStr,
+        {
+          userId: user.id,
+          serviceId: service.id,
+          serviceName: service.name,
+          phoneNumber: formattedPhone,
+          status: "active",
+          price: priceStr,
+          country: rentalCountry,
+          days: rentalDays,
+          proxnumId,
+          createdAt: now.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          cancelledAt: null,
+        },
+        `${service.name} rental (${rentalDays} days)`,
+      );
 
-      await storage.createTransaction({
-        userId: user.id,
-        type: "purchase",
-        amount: `-${finalPrice.toFixed(2)}`,
-        description: `${service.name} rental (${rentalDays} days)`,
-        orderId: rental.id,
-        stripeSessionId: null,
-        createdAt: now.toISOString(),
-      });
+      if (outcome.result !== "ok") {
+        if (proxnumId) { try { await proxnumApi.cancelRental(proxnumId); } catch (e) {} }
+        if (outcome.result === "insufficient") return res.status(400).json({ message: "Insufficient balance" });
+        return res.status(404).json({ message: "User not found" });
+      }
 
-      res.json(rental);
+      res.json(outcome.rental);
     } catch (err: any) {
       console.error("Rental error:", err);
       res.status(500).json({ message: safeError(err) });
@@ -864,7 +853,11 @@ export async function registerRoutes(
         }
       }
 
-      await storage.cancelRental(rental.id);
+      // Atomic conditional cancel (idempotent — no double state transition).
+      const outcome = storage.cancelRentalAtomic(rental.id);
+      if (outcome.result === "already") {
+        return res.status(409).json({ message: "Rental already cancelled" });
+      }
       res.json({ message: "Rental cancelled" });
     } catch (err: any) {
       res.status(500).json({ message: safeError(err) });
@@ -954,23 +947,12 @@ export async function registerRoutes(
       const deposit = await storage.getCryptoDeposit(Number(req.params.id));
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
       if (deposit.userId !== user.id) return res.status(403).json({ message: "Forbidden" });
-      // Guard against double-crediting the same deposit.
-      if (deposit.status === "completed") return res.status(400).json({ message: "Already completed" });
-      const now = new Date().toISOString();
-      await storage.updateCryptoDeposit(deposit.id, { status: "completed", completedAt: now });
-      const freshUser = await storage.getUser(deposit.userId);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(deposit.amount)).toFixed(2);
-        await storage.updateUserBalance(deposit.userId, newBalance);
-        await storage.createTransaction({
-          userId: deposit.userId, type: "deposit", amount: deposit.amount,
-          description: `Crypto deposit (${deposit.currency}) confirmed`,
-          orderId: null, stripeSessionId: null, createdAt: now,
-        });
-        res.json({ message: "Deposit confirmed", newBalance });
-      } else {
-        res.json({ message: "Deposit confirmed" });
+      // Atomic, single-credit confirmation — identical logic to admin/webhook confirm.
+      const outcome = storage.confirmCryptoDepositAtomic(deposit.id, user.id, " confirmed");
+      if (outcome.result === "already") {
+        return res.status(409).json({ message: "Deposit already processed" });
       }
+      res.json({ message: "Deposit confirmed", newBalance: outcome.newBalance });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
@@ -978,21 +960,12 @@ export async function registerRoutes(
     try {
       const deposit = await storage.getCryptoDeposit(Number(req.params.id));
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
-      // Guard against double-crediting the same deposit.
-      if (deposit.status === "completed") return res.status(400).json({ message: "Already completed" });
-      const now = new Date().toISOString();
-      await storage.updateCryptoDeposit(deposit.id, { status: "completed", completedAt: now });
-      const freshUser = await storage.getUser(deposit.userId);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(deposit.amount)).toFixed(2);
-        await storage.updateUserBalance(deposit.userId, newBalance);
-        await storage.createTransaction({
-          userId: deposit.userId, type: "deposit", amount: deposit.amount,
-          description: `Crypto deposit (${deposit.currency}) confirmed by admin`,
-          orderId: null, stripeSessionId: null, createdAt: now,
-        });
+      // Atomic conditional transition + credit; cannot double-credit.
+      const outcome = storage.confirmCryptoDepositAtomic(deposit.id, null, " confirmed by admin");
+      if (outcome.result === "already") {
+        return res.status(409).json({ message: "Deposit already processed" });
       }
-      res.json({ message: "Deposit confirmed and balance credited" });
+      res.json({ message: "Deposit confirmed and balance credited", newBalance: outcome.newBalance });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
@@ -1142,20 +1115,14 @@ export async function registerRoutes(
       if (value === null) {
         return res.status(400).json({ message: "Valid positive amount is required" });
       }
-      const targetUser = await storage.getUser(Number(req.params.id));
-      if (!targetUser) return res.status(404).json({ message: "User not found" });
-      const newBalance = (parseFloat(targetUser.balance) + value).toFixed(2);
-      await storage.updateUserBalance(targetUser.id, newBalance);
-      await storage.createTransaction({
-        userId: targetUser.id,
-        type: "deposit",
-        amount: value.toFixed(2),
-        description: description || "Admin balance adjustment",
-        orderId: null,
-        stripeSessionId: null,
-        createdAt: new Date().toISOString(),
-      });
-      res.json({ message: "Balance updated", newBalance });
+      // Atomic read-modify-write + audit transaction (no lost updates).
+      const outcome = storage.addUserBalanceAtomic(
+        Number(req.params.id),
+        value.toFixed(2),
+        description || "Admin balance adjustment",
+      );
+      if (outcome.result === "user_not_found") return res.status(404).json({ message: "User not found" });
+      res.json({ message: "Balance updated", newBalance: outcome.newBalance });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
 
@@ -1163,8 +1130,11 @@ export async function registerRoutes(
     try {
       const deposit = await storage.getCryptoDeposit(Number(req.params.id));
       if (!deposit) return res.status(404).json({ message: "Deposit not found" });
-      if (deposit.status === "completed") return res.status(400).json({ message: "Cannot reject completed deposit" });
-      await storage.updateCryptoDeposit(deposit.id, { status: "rejected", completedAt: new Date().toISOString() });
+      // Atomic terminal transition — a confirmed deposit can never also be rejected.
+      const outcome = storage.rejectCryptoDepositAtomic(deposit.id);
+      if (outcome.result === "already") {
+        return res.status(409).json({ message: "Cannot reject: deposit already processed" });
+      }
       res.json({ message: "Deposit rejected" });
     } catch (err: any) { res.status(500).json({ message: safeError(err) }); }
   });
@@ -1242,28 +1212,30 @@ export async function registerRoutes(
       }
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const newBalance = (balance - price).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
-
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 20 * 60 * 1000);
-
-      const order = await storage.createOrder({
-        userId: user.id, serviceId: svc.id, serviceName: svc.name,
-        phoneNumber: formattedPhone, status: "pending", otpCode: null,
-        smsMessages: null,
-        price: svc.price, country: resolvedCountry, proxnumId,
-        createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
-      });
-
       const costNote = amountPaid != null ? ` (provider cost: $${amountPaid.toFixed(6)})` : "";
-      await storage.createTransaction({
-        userId: user.id, type: "purchase", amount: `-${svc.price}`,
-        description: `${svc.name} OTP number${costNote}`, orderId: order.id,
-        stripeSessionId: null, createdAt: now.toISOString(),
-      });
 
-      res.json({ orderId: order.id, phoneNumber: formattedPhone, status: "pending", expiresAt: order.expiresAt });
+      const outcome = storage.createOrderWithDebitAtomic(
+        user.id,
+        svc.price,
+        {
+          userId: user.id, serviceId: svc.id, serviceName: svc.name,
+          phoneNumber: formattedPhone, status: "pending", otpCode: null,
+          smsMessages: null,
+          price: svc.price, country: resolvedCountry, proxnumId,
+          createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), completedAt: null,
+        },
+        `${svc.name} OTP number${costNote}`,
+      );
+
+      if (outcome.result !== "ok") {
+        if (proxnumId) { try { await proxnumApi.cancelVirtual(proxnumId); } catch (e) {} }
+        if (outcome.result === "insufficient") return res.status(400).json({ error: "Insufficient balance" });
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({ orderId: outcome.order.id, phoneNumber: formattedPhone, status: "pending", expiresAt: outcome.order.expiresAt });
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
@@ -1336,11 +1308,9 @@ export async function registerRoutes(
         }
       }
 
-      await storage.cancelOrder(order.id);
-      const freshUser = await storage.getUser(user.id);
-      if (freshUser) {
-        const newBalance = (parseFloat(freshUser.balance) + parseFloat(order.price)).toFixed(2);
-        await storage.updateUserBalance(user.id, newBalance);
+      const outcome = storage.cancelOrderWithRefundAtomic(order.id);
+      if (outcome.result === "already") {
+        return res.status(409).json({ error: "Order already cancelled" });
       }
       res.json({ message: "Order cancelled and refunded" });
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
@@ -1419,26 +1389,29 @@ export async function registerRoutes(
       if (!phoneNumber) return res.status(503).json({ error: "No rental numbers available" });
 
       const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`;
-      const newBalance = (balance - finalPrice).toFixed(2);
-      await storage.updateUserBalance(user.id, newBalance);
-
       const now = new Date();
       const expiresAt = new Date(now.getTime() + rentalDays * 24 * 60 * 60 * 1000);
+      const priceStr = finalPrice.toFixed(2);
 
-      const rental = await storage.createRental({
-        userId: user.id, serviceId: svc.id, serviceName: svc.name,
-        phoneNumber: formattedPhone, status: "active", price: finalPrice.toFixed(2),
-        country: rentalCountry, days: rentalDays, proxnumId,
-        createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), cancelledAt: null,
-      });
+      const outcome = storage.createRentalWithDebitAtomic(
+        user.id,
+        priceStr,
+        {
+          userId: user.id, serviceId: svc.id, serviceName: svc.name,
+          phoneNumber: formattedPhone, status: "active", price: priceStr,
+          country: rentalCountry, days: rentalDays, proxnumId,
+          createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), cancelledAt: null,
+        },
+        `${svc.name} rental (${rentalDays} days)`,
+      );
 
-      await storage.createTransaction({
-        userId: user.id, type: "purchase", amount: `-${finalPrice.toFixed(2)}`,
-        description: `${svc.name} rental (${rentalDays} days)`, orderId: rental.id,
-        stripeSessionId: null, createdAt: now.toISOString(),
-      });
+      if (outcome.result !== "ok") {
+        if (proxnumId) { try { await proxnumApi.cancelRental(proxnumId); } catch (e) {} }
+        if (outcome.result === "insufficient") return res.status(400).json({ error: "Insufficient balance" });
+        return res.status(404).json({ error: "User not found" });
+      }
 
-      res.json({ rentalId: rental.id, phoneNumber: formattedPhone, status: "active", expiresAt: rental.expiresAt });
+      res.json({ rentalId: outcome.rental.id, phoneNumber: formattedPhone, status: "active", expiresAt: outcome.rental.expiresAt });
     } catch (err: any) { res.status(500).json({ error: safeError(err) }); }
   });
 
