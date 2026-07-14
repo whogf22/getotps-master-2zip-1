@@ -14,7 +14,9 @@ import { eq, and, desc, or } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 
-export const sqlite = new Database("data.db");
+// Honor DATABASE_URL when provided (default keeps the existing ./data.db file).
+// Never point this at an ephemeral build dir — the SQLite file must persist.
+export const sqlite = new Database(process.env.DATABASE_URL || "data.db");
 sqlite.pragma("journal_mode = WAL");
 
 export const db = drizzle(sqlite);

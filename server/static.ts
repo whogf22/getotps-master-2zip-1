@@ -1,46 +1,76 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import fs from "fs";
 import path from "path";
 
-// SPA routes that should serve index.html with HTTP 200
+// SPA routes that should serve index.html with HTTP 200.
 const SPA_ROUTES = new Set([
   "/", "/login", "/register", "/dashboard", "/buy",
-  "/active", "/history", "/add-funds", "/api-docs",
+  "/active", "/history", "/add-funds", "/funds", "/api-docs",
   "/profile", "/admin", "/admin/users", "/admin/deposits",
-  "/admin/settings", "/privacy", "/terms",
+  "/admin/settings",
 ]);
 
-export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
-  if (!fs.existsSync(distPath)) {
+function resolveDistPath(): string {
+  // Works whether running from the bundled CJS (dist/index.cjs) or an
+  // unexpected layout. Native/dev fallbacks keep this robust.
+  const candidates = [
+    path.resolve(__dirname, "public"),
+    path.resolve(process.cwd(), "dist/public"),
+    path.resolve(__dirname, "../dist/public"),
+  ];
+  const found = candidates.find((p) => fs.existsSync(p));
+  if (!found) {
     throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
+      `Could not find the build directory. Tried: ${candidates.join(", ")}. Run "npm run build" first.`
     );
   }
+  return found;
+}
 
-  app.use(express.static(distPath));
+export function serveStatic(app: Express) {
+  const distPath = resolveDistPath();
 
-  // Serve index.html for known SPA routes — HTTP 200
-  // Return HTTP 404 for unknown paths (files with extensions, unknown routes)
-  app.use("/{*path}", (req, res) => {
+  const sendApp = (res: Response, status: number) => {
+    // index.html must never be cached so new deploys are picked up immediately.
+    res.status(status);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.sendFile(path.resolve(distPath, "index.html"));
+  };
+
+  app.use(
+    express.static(distPath, {
+      index: false, // let the SPA fallback own "/" so index.html stays uncached
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        } else {
+          // Vite emits content-hashed asset filenames, safe to cache long-term.
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    })
+  );
+
+  app.use("/{*path}", (req: Request, res: Response) => {
+    // Never hand the SPA shell to an unmatched API call.
+    if (req.path.startsWith("/api")) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
     const cleanPath = req.path.replace(/\/$/, "") || "/";
 
-    // Files with extensions that don't exist → 404
+    // Missing files with an extension are true 404s (no directory traversal:
+    // express.static already rejected the path, and we only send a fixed file).
     if (path.extname(cleanPath) !== "") {
       return res.status(404).send("Not found");
     }
 
-    // Known SPA routes → serve app
+    // Known SPA routes (and admin subtree) → serve the app with 200.
     if (SPA_ROUTES.has(cleanPath) || cleanPath.startsWith("/admin")) {
-      return res.sendFile(path.resolve(distPath, "index.html"));
+      return sendApp(res, 200);
     }
 
-    // /buy?service=X → serve app (query-param based routes)
-    if (cleanPath === "/buy") {
-      return res.sendFile(path.resolve(distPath, "index.html"));
-    }
-
-    // Unknown path → 404 with a proper HTML page
-    res.status(404).sendFile(path.resolve(distPath, "index.html"));
+    // Unknown route → serve the SPA shell but signal 404 for crawlers.
+    return sendApp(res, 404);
   });
 }
