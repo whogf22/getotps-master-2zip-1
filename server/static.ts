@@ -51,9 +51,16 @@ export function serveStatic(app: Express) {
     })
   );
 
-  app.use("/{*path}", (req: Request, res: Response) => {
+  // Path-less catch-all so req.path is the FULL request path (a mounted path
+  // pattern would strip the prefix and misclassify every route as "/").
+  app.use((req: Request, res: Response) => {
     // Never hand the SPA shell to an unmatched API call.
     if (req.path.startsWith("/api")) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    // Only GET/HEAD should ever receive the SPA shell.
+    if (req.method !== "GET" && req.method !== "HEAD") {
       return res.status(404).json({ message: "Not found" });
     }
 
