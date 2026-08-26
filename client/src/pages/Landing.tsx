@@ -15,25 +15,84 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function useCountUp(end: number, duration = 2) {
-  const [count, setCount] = useState(0);
+/**
+ * True when the environment has no usable animation loop.
+ *
+ * Set by the bootstrap probe in `main.tsx` before this module evaluates. Some
+ * in-app WebViews, heavily throttled background tabs, and low-power mode never
+ * tick requestAnimationFrame; there framer-motion creates its reveal animations
+ * but they never advance, hold their opening keyframe, and every section stays
+ * at `opacity: 0` — a blank page rather than a merely un-animated one. A running
+ * WAAPI animation outranks author styles (even `!important`), so this cannot be
+ * patched after the fact: components must skip their hidden initial state.
+ */
+const NO_MOTION =
+  typeof window !== "undefined" &&
+  (window as Window & { __NO_MOTION__?: boolean }).__NO_MOTION__ === true;
+
+/**
+ * Wrap a hidden `initial` state so it is skipped when motion is unavailable.
+ * Returning `false` makes framer-motion render the target state immediately
+ * instead of starting from (and getting stuck at) `opacity: 0`.
+ */
+const motionInitial = <T,>(initial: T): T | false =>
+  NO_MOTION ? false : initial;
+
+/**
+ * useInView with a failsafe.
+ *
+ * Sections start hidden and reveal when scrolled into view. If the
+ * IntersectionObserver callback never fires (throttled/background rendering),
+ * that would leave content permanently invisible, so treat "in view" as true
+ * after a short grace period — and immediately when motion is unavailable.
+ */
+function useInViewSafe(
+  ref: Parameters<typeof useInView>[0],
+  options?: Parameters<typeof useInView>[1],
+  failsafeMs = 1200,
+) {
+  const inView = useInView(ref, options);
+  const [failsafe, setFailsafe] = useState(NO_MOTION);
+  useEffect(() => {
+    if (NO_MOTION) return;
+    const t = setTimeout(() => setFailsafe(true), failsafeMs);
+    return () => clearTimeout(t);
+  }, [failsafeMs]);
+  return inView || failsafe;
+}
+
+function useCountUp(end: number, duration = 2, decimals = 0) {
+  const [count, setCount] = useState(NO_MOTION ? end : 0);
   const ref = useRef<HTMLSpanElement>(null);
-  const inView = useInView(ref, { once: true });
+  const inView = useInViewSafe(ref, { once: true });
   useEffect(() => {
     if (!inView) return;
+    if (NO_MOTION) {
+      setCount(end);
+      return;
+    }
+    // Round to the requested precision instead of always flooring — flooring
+    // clamped the 99.9% uptime stat to "99.0%" for its entire animation.
+    const factor = 10 ** decimals;
     const controls = animate(0, end, {
       duration,
-      onUpdate: v => setCount(Math.floor(v)),
+      onUpdate: v => setCount(Math.round(v * factor) / factor),
       ease: "easeOut",
     });
-    return controls.stop;
-  }, [inView, end, duration]);
+    // If the animation loop never ticks, still land on the final value.
+    const settle = setTimeout(() => setCount(end), duration * 1000 + 400);
+    return () => {
+      controls.stop();
+      clearTimeout(settle);
+    };
+  }, [inView, end, duration, decimals]);
   return { count, ref };
 }
 
 const prefersReducedMotion =
-  typeof window !== "undefined" &&
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  (typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches) ||
+  NO_MOTION;
 
 const fadeUp: Variants = prefersReducedMotion
   ? {}
@@ -116,7 +175,7 @@ function Navbar() {
 
   return (
     <motion.nav
-      initial={{ y: -20, opacity: 0 }}
+      initial={motionInitial({ y: -20, opacity: 0 })}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5 }}
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
@@ -202,12 +261,12 @@ function TypewriterWord() {
 function LiveOTPCard({ delay = 0, service, code, time }: { delay?: number; service: string; code: string; time: string }) {
   return (
     <motion.div
-      initial={{ opacity: 0, x: 30, scale: 0.9 }}
+      initial={motionInitial({ opacity: 0, x: 30, scale: 0.9 })}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       transition={{ delay, duration: 0.5, type: "spring", stiffness: 200 }}
       className="flex items-center gap-3 bg-[#0A1628]/80 backdrop-blur-xl border border-white/10 rounded-2xl px-4 py-3 shadow-2xl w-64"
     >
-      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#00D4C4]/20 to-[#00D4C4]/5 border border-[#00D4C4]/30 flex items-center justify-center flex-shrink-0">
+      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#00D4C4]/20 to-[#00D4C4]/[0.05] border border-[#00D4C4]/30 flex items-center justify-center flex-shrink-0">
         <CheckCircle className="w-4 h-4 text-[#00D4C4]" />
       </div>
       <div className="flex-1 min-w-0">
@@ -227,11 +286,11 @@ function HeroSection() {
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-16">
       {/* Animated gradient mesh background */}
-      <div className="absolute inset-0">
+      <div className="absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-[#060D1A]" />
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[600px] bg-gradient-radial from-[#00D4C4]/12 via-transparent to-transparent blur-3xl" />
-        <div className="absolute bottom-0 left-1/4 w-[500px] h-[400px] bg-gradient-radial from-[#6366F1]/8 via-transparent to-transparent blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-gradient-radial from-[#0099CC]/8 via-transparent to-transparent blur-3xl" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[600px] bg-gradient-radial from-[#00D4C4]/[0.12] via-transparent to-transparent blur-3xl" />
+        <div className="absolute bottom-0 left-1/4 w-[500px] h-[400px] bg-gradient-radial from-[#6366F1]/[0.08] via-transparent to-transparent blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-gradient-radial from-[#0099CC]/[0.08] via-transparent to-transparent blur-3xl" />
         {/* Grid lines */}
         <div
           className="absolute inset-0 opacity-[0.03]"
@@ -245,12 +304,12 @@ function HeroSection() {
         <motion.div
           animate={{ scale: [1, 1.15, 1], opacity: [0.4, 0.7, 0.4] }}
           transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-1/4 left-[15%] w-64 h-64 rounded-full bg-[#00D4C4]/6 blur-3xl"
+          className="absolute top-1/4 left-[15%] w-64 h-64 rounded-full bg-[#00D4C4]/[0.06] blur-3xl"
         />
         <motion.div
           animate={{ scale: [1.1, 1, 1.1], opacity: [0.3, 0.5, 0.3] }}
           transition={{ duration: 8, repeat: Infinity, ease: "easeInOut", delay: 2 }}
-          className="absolute bottom-1/3 right-[12%] w-80 h-80 rounded-full bg-[#6366F1]/5 blur-3xl"
+          className="absolute bottom-1/3 right-[12%] w-80 h-80 rounded-full bg-[#6366F1]/[0.05] blur-3xl"
         />
       </div>
 
@@ -259,14 +318,14 @@ function HeroSection() {
           {/* Left — copy */}
           <div className="text-left">
             {/* Badge */}
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+            <motion.div initial={motionInitial({ opacity: 0, y: 16 })} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
               className="inline-flex items-center gap-2 bg-[#00D4C4]/10 border border-[#00D4C4]/20 rounded-full px-4 py-1.5 mb-8">
               <span className="w-2 h-2 rounded-full bg-[#00D4C4] animate-pulse" />
               <span className="text-[#00D4C4] text-sm font-medium">Live · 400+ Services · 200+ Countries</span>
             </motion.div>
 
             {/* Headline */}
-            <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+            <motion.h1 initial={motionInitial({ opacity: 0, y: 20 })} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
               className="text-5xl lg:text-6xl xl:text-7xl font-black text-white leading-[1.05] tracking-tight mb-4">
               Verify on
               <br />
@@ -275,14 +334,14 @@ function HeroSection() {
               <span className="text-slate-400 font-semibold text-4xl lg:text-5xl xl:text-6xl">without your real number.</span>
             </motion.h1>
 
-            <motion.p initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
+            <motion.p initial={motionInitial({ opacity: 0, y: 20 })} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
               className="text-slate-400 text-xl leading-relaxed mb-10 max-w-xl">
               Virtual phone numbers for SMS verification.
               <strong className="text-white"> No real number exposed.</strong> OTP codes in under 5 seconds.
             </motion.p>
 
             {/* CTAs */}
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}
+            <motion.div initial={motionInitial({ opacity: 0, y: 20 })} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}
               className="flex flex-wrap gap-4 mb-12">
               <a href="/#/register">
                 <motion.button
@@ -299,7 +358,7 @@ function HeroSection() {
               <a href="#how-it-works">
                 <motion.button
                   whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  className="flex items-center gap-2 px-8 py-4 rounded-2xl border border-white/10 bg-white/5 backdrop-blur text-white font-medium text-base hover:border-white/20 hover:bg-white/8 transition-all"
+                  className="flex items-center gap-2 px-8 py-4 rounded-2xl border border-white/10 bg-white/5 backdrop-blur text-white font-medium text-base hover:border-white/20 hover:bg-white/[0.08] transition-all"
                 >
                   See how it works
                   <ArrowRight className="w-4 h-4" />
@@ -308,7 +367,7 @@ function HeroSection() {
             </motion.div>
 
             {/* Trust row */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6 }}
+            <motion.div initial={motionInitial({ opacity: 0 })} animate={{ opacity: 1 }} transition={{ delay: 0.6 }}
               className="flex flex-wrap gap-6 text-sm text-slate-500">
               {["No credit card", "Pay per use", "Instant refund", "Full API access"].map(t => (
                 <span key={t} className="flex items-center gap-1.5">
@@ -322,10 +381,9 @@ function HeroSection() {
           {/* Right — phone mockup + live OTP cards */}
           <div className="relative flex justify-center items-center">
             <motion.div
-              initial={{ opacity: 0, scale: 0.85, y: 30 }}
+              initial={motionInitial({ opacity: 0, scale: 0.85, y: 30 })}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ delay: 0.4, duration: 0.8, type: "spring", stiffness: 100 }}
-              animate-repeat={{ y: [0, -12, 0] }}
               className="relative"
             >
               {/* Phone frame */}
@@ -335,7 +393,7 @@ function HeroSection() {
                 className="relative w-64 h-[520px] bg-[#0A1628] rounded-[2.5rem] border border-white/10 shadow-2xl shadow-black/60 overflow-hidden"
               >
                 {/* Screen gradient */}
-                <div className="absolute inset-0 bg-gradient-to-br from-[#00D4C4]/5 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-br from-[#00D4C4]/[0.05] to-transparent" />
                 {/* Top notch */}
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-6 bg-[#060D1A] rounded-full" />
                 {/* Faux UI */}
@@ -362,10 +420,10 @@ function HeroSection() {
                     { svc: "Binance",  code: "••• •••", status: "waiting",  color: "#F3BA2F" },
                   ].map((item, i) => (
                     <motion.div key={i}
-                      initial={{ opacity: 0, x: -10 }}
+                      initial={motionInitial({ opacity: 0, x: -10 })}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: 0.8 + i * 0.15 }}
-                      className="flex items-center gap-2.5 bg-white/3 border border-white/5 rounded-xl px-3 py-2.5"
+                      className="flex items-center gap-2.5 bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2.5"
                     >
                       <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: item.color + "22" }}>
                         <span style={{ color: item.color }} className="text-xs font-bold">{item.svc[0]}</span>
@@ -385,17 +443,17 @@ function HeroSection() {
               </motion.div>
 
               {/* Floating cards */}
-              <div className="absolute -right-36 top-16 space-y-3">
+              <div className="hidden xl:block absolute -right-36 top-16 space-y-3">
                 <LiveOTPCard delay={1.2} service="WhatsApp" code="847 291" time="2s ago" />
                 <LiveOTPCard delay={1.5} service="Telegram" code="563 018" time="1m ago" />
               </div>
-              <div className="absolute -left-44 bottom-24">
+              <div className="hidden xl:block absolute -left-44 bottom-24">
                 <LiveOTPCard delay={1.8} service="Google" code="391 752" time="3m ago" />
               </div>
 
               {/* Glow ring */}
               <div className="absolute inset-0 rounded-[2.5rem] ring-1 ring-[#00D4C4]/15 pointer-events-none" />
-              <div className="absolute -inset-4 rounded-[3rem] bg-[#00D4C4]/3 blur-2xl pointer-events-none" />
+              <div className="absolute -inset-4 rounded-[3rem] bg-[#00D4C4]/[0.03] blur-2xl pointer-events-none" />
             </motion.div>
           </div>
         </div>
@@ -403,7 +461,7 @@ function HeroSection() {
 
       {/* Scroll hint */}
       <motion.div
-        initial={{ opacity: 0 }}
+        initial={motionInitial({ opacity: 0 })}
         animate={{ opacity: 1 }}
         transition={{ delay: 1.5 }}
         className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-slate-600"
@@ -419,7 +477,7 @@ function HeroSection() {
 // ─── Stats ───────────────────────────────────────────────────────────────────
 
 function StatItem({ end, suffix, label, decimals = 0 }: { end: number; suffix: string; label: string; decimals?: number }) {
-  const { count, ref } = useCountUp(end, 2);
+  const { count, ref } = useCountUp(end, 2, decimals);
   return (
     <div className="text-center">
       <p className="text-4xl font-black text-white mb-1">
@@ -433,13 +491,13 @@ function StatItem({ end, suffix, label, decimals = 0 }: { end: number; suffix: s
 
 function StatsBar() {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true });
+  const inView = useInViewSafe(ref, { once: true });
   return (
     <section ref={ref} className="relative border-y border-white/5 bg-white/[0.02] backdrop-blur">
       <div className="max-w-4xl mx-auto px-6 py-12 grid grid-cols-2 md:grid-cols-4 gap-8">
         {STATS.map((s, i) => (
           <motion.div key={i}
-            initial={{ opacity: 0, y: 16 }} animate={inView ? { opacity: 1, y: 0 } : {}}
+            initial={motionInitial({ opacity: 0, y: 16 })} animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ delay: i * 0.1, duration: 0.5 }}
           >
             <StatItem {...s} />
@@ -460,7 +518,7 @@ function ServiceCard({ name, icon, color, hot }: typeof SERVICES[0]) {
       variants={fadeUp}
       whileHover={{ y: -4, scale: 1.02 }}
       whileTap={{ scale: 0.97 }}
-      className="group relative flex flex-col items-center gap-2.5 p-4 rounded-2xl border border-white/6 bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.06] cursor-pointer transition-all duration-300 text-center overflow-hidden"
+      className="group relative flex flex-col items-center gap-2.5 p-4 rounded-2xl border border-white/[0.06] bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.06] cursor-pointer transition-all duration-300 text-center overflow-hidden"
       style={{ "--hover-glow": color + "20" } as any}
     >
       {hot && (
@@ -491,7 +549,7 @@ function ServiceCard({ name, icon, color, hot }: typeof SERVICES[0]) {
 
 function ServicesSection() {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-100px" });
+  const inView = useInViewSafe(ref, { once: true, margin: "-100px" });
   const { data: apiServices } = useQuery<any[]>({ queryKey: ["/api/public/services"] });
   const displayServices = SERVICES; // Use curated list with real icons for landing
 
@@ -499,7 +557,7 @@ function ServicesSection() {
     <section id="services" ref={ref} className="py-28 px-6">
       <div className="max-w-7xl mx-auto">
         <motion.div className="text-center mb-16"
-          initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6 }}>
+          initial={motionInitial({ opacity: 0, y: 24 })} animate={inView ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6 }}>
           <span className="text-xs font-bold tracking-widest text-[#00D4C4] uppercase mb-4 block">Every platform</span>
           <h2 className="text-4xl lg:text-5xl font-black text-white mb-5">
             One dashboard.<br />
@@ -514,8 +572,8 @@ function ServicesSection() {
 
         <motion.div
           variants={staggerContainer}
-          initial="hidden"
-          animate={inView ? "show" : "hidden"}
+          initial={motionInitial("hidden")}
+          animate={inView || NO_MOTION ? "show" : "hidden"}
           className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3"
         >
           {displayServices.map((s, i) => (
@@ -524,7 +582,7 @@ function ServicesSection() {
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0 }} animate={inView ? { opacity: 1 } : {}} transition={{ delay: 0.8 }}
+          initial={motionInitial({ opacity: 0 })} animate={inView ? { opacity: 1 } : {}} transition={{ delay: 0.8 }}
           className="text-center mt-10"
         >
           <a href="/#/register"
@@ -542,14 +600,14 @@ function ServicesSection() {
 
 function HowItWorks() {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-80px" });
+  const inView = useInViewSafe(ref, { once: true, margin: "-80px" });
 
   return (
     <section id="how-it-works" ref={ref}
-      className="py-28 px-6 bg-gradient-to-b from-transparent via-[#00D4C4]/3 to-transparent">
+      className="py-28 px-6 bg-gradient-to-b from-transparent via-[#00D4C4]/[0.03] to-transparent">
       <div className="max-w-5xl mx-auto">
         <motion.div className="text-center mb-20"
-          initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}}>
+          initial={motionInitial({ opacity: 0, y: 24 })} animate={inView ? { opacity: 1, y: 0 } : {}}>
           <span className="text-xs font-bold tracking-widest text-[#00D4C4] uppercase mb-4 block">Simple process</span>
           <h2 className="text-4xl lg:text-5xl font-black text-white mb-4">Get verified in <span className="text-[#00D4C4]">under 2 minutes</span></h2>
           <p className="text-slate-400 text-lg">Four steps. No technical knowledge needed.</p>
@@ -568,7 +626,7 @@ function HowItWorks() {
 
           {STEPS.map((step, i) => (
             <motion.div key={i}
-              initial={{ opacity: 0, y: 30 }}
+              initial={motionInitial({ opacity: 0, y: 30 })}
               animate={inView ? { opacity: 1, y: 0 } : {}}
               transition={{ delay: 0.2 + i * 0.15, duration: 0.5 }}
               className="relative flex flex-col items-center text-center"
@@ -597,7 +655,7 @@ function FeatureCard({ icon: Icon, title, desc, color }: typeof FEATURES[0]) {
     <motion.div
       variants={fadeUp}
       whileHover={{ y: -3 }}
-      className="group relative p-6 rounded-2xl border border-white/6 bg-white/[0.02] hover:border-white/12 hover:bg-white/[0.04] transition-all duration-300 overflow-hidden"
+      className="group relative p-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.04] transition-all duration-300 overflow-hidden"
     >
       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
         style={{ background: `radial-gradient(circle at 20% 20%, ${color}10, transparent 60%)` }} />
@@ -613,18 +671,18 @@ function FeatureCard({ icon: Icon, title, desc, color }: typeof FEATURES[0]) {
 
 function FeaturesSection() {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-80px" });
+  const inView = useInViewSafe(ref, { once: true, margin: "-80px" });
 
   return (
     <section ref={ref} className="py-28 px-6">
       <div className="max-w-7xl mx-auto">
         <motion.div className="text-center mb-16"
-          initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}}>
+          initial={motionInitial({ opacity: 0, y: 24 })} animate={inView ? { opacity: 1, y: 0 } : {}}>
           <span className="text-xs font-bold tracking-widest text-[#00D4C4] uppercase mb-4 block">Built for trust</span>
           <h2 className="text-4xl lg:text-5xl font-black text-white mb-4">Security &amp; reliability first</h2>
           <p className="text-slate-400 text-lg max-w-lg mx-auto">Every feature designed to keep you anonymous and your verifications instant.</p>
         </motion.div>
-        <motion.div variants={staggerContainer} initial="hidden" animate={inView ? "show" : "hidden"}
+        <motion.div variants={staggerContainer} initial={motionInitial("hidden")} animate={inView || NO_MOTION ? "show" : "hidden"}
           className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
           {FEATURES.map((f, i) => <FeatureCard key={i} {...f} />)}
         </motion.div>
@@ -637,13 +695,13 @@ function FeaturesSection() {
 
 function DashboardPreview() {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-100px" });
+  const inView = useInViewSafe(ref, { once: true, margin: "-100px" });
 
   return (
-    <section ref={ref} className="py-28 px-6">
+    <section ref={ref} className="py-28 px-6 overflow-hidden">
       <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-16 items-center">
         <motion.div
-          initial={{ opacity: 0, x: -30 }} animate={inView ? { opacity: 1, x: 0 } : {}} transition={{ duration: 0.6 }}>
+          initial={motionInitial({ opacity: 0, x: -30 })} animate={inView ? { opacity: 1, x: 0 } : {}} transition={{ duration: 0.6 }}>
           <span className="text-xs font-bold tracking-widest text-[#00D4C4] uppercase mb-4 block">Live dashboard</span>
           <h2 className="text-4xl lg:text-5xl font-black text-white mb-6">Your control center</h2>
           <p className="text-slate-400 text-lg mb-8 leading-relaxed">
@@ -656,7 +714,7 @@ function DashboardPreview() {
               "Full order history & refund tracking",
               "REST API key & webhook config",
             ].map((item, i) => (
-              <motion.li key={i} initial={{ opacity: 0, x: -10 }} animate={inView ? { opacity: 1, x: 0 } : {}}
+              <motion.li key={i} initial={motionInitial({ opacity: 0, x: -10 })} animate={inView ? { opacity: 1, x: 0 } : {}}
                 transition={{ delay: 0.2 + i * 0.1 }} className="flex items-center gap-3 text-slate-300">
                 <CheckCircle className="w-5 h-5 text-[#00D4C4] flex-shrink-0" />
                 {item}
@@ -673,8 +731,9 @@ function DashboardPreview() {
 
         {/* Dashboard mockup wide */}
         <motion.div
-          initial={{ opacity: 0, x: 30 }} animate={inView ? { opacity: 1, x: 0 } : {}} transition={{ duration: 0.6, delay: 0.2 }}>
-          <div className="relative rounded-2xl border border-white/8 bg-[#0A1628] overflow-hidden shadow-2xl shadow-black/60">
+          className="relative"
+          initial={motionInitial({ opacity: 0, x: 30 })} animate={inView ? { opacity: 1, x: 0 } : {}} transition={{ duration: 0.6, delay: 0.2 }}>
+          <div className="relative rounded-2xl border border-white/[0.08] bg-[#0A1628] overflow-hidden shadow-2xl shadow-black/60">
             {/* Header bar */}
             <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
               <div className="w-2.5 h-2.5 rounded-full bg-red-500/70" />
@@ -700,9 +759,9 @@ function DashboardPreview() {
                 { svc: "Binance",  code: "••• •••", t: "now",     status: "waiting",  c: "#F3BA2F" },
               ].map((item, i) => (
                 <motion.div key={i}
-                  initial={{ opacity: 0, y: 8 }} animate={inView ? { opacity: 1, y: 0 } : {}}
+                  initial={motionInitial({ opacity: 0, y: 8 })} animate={inView ? { opacity: 1, y: 0 } : {}}
                   transition={{ delay: 0.4 + i * 0.1 }}
-                  className="flex items-center gap-3 bg-white/3 border border-white/5 rounded-xl px-4 py-3"
+                  className="flex items-center gap-3 bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3"
                 >
                   <div className="w-8 h-8 rounded-xl flex items-center justify-center font-bold text-sm"
                     style={{ background: item.c + "22", color: item.c }}>{item.svc[0]}</div>
@@ -720,7 +779,7 @@ function DashboardPreview() {
               ))}
             </div>
           </div>
-          <div className="absolute -inset-4 rounded-3xl bg-[#00D4C4]/3 blur-3xl pointer-events-none" />
+          <div className="absolute inset-0 -m-4 rounded-3xl bg-[#00D4C4]/[0.03] blur-3xl pointer-events-none" />
         </motion.div>
       </div>
     </section>
@@ -731,23 +790,23 @@ function DashboardPreview() {
 
 function TestimonialsSection() {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-80px" });
+  const inView = useInViewSafe(ref, { once: true, margin: "-80px" });
 
   return (
     <section ref={ref} className="py-28 px-6 bg-gradient-to-b from-transparent via-white/[0.015] to-transparent">
       <div className="max-w-5xl mx-auto">
         <motion.div className="text-center mb-16"
-          initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}}>
+          initial={motionInitial({ opacity: 0, y: 24 })} animate={inView ? { opacity: 1, y: 0 } : {}}>
           <span className="text-xs font-bold tracking-widest text-[#00D4C4] uppercase mb-4 block">Trusted worldwide</span>
           <h2 className="text-4xl font-black text-white">Loved by developers</h2>
         </motion.div>
-        <motion.div variants={staggerContainer} initial="hidden" animate={inView ? "show" : "hidden"}
+        <motion.div variants={staggerContainer} initial={motionInitial("hidden")} animate={inView || NO_MOTION ? "show" : "hidden"}
           className="grid md:grid-cols-3 gap-6">
           {TESTIMONIALS.map((t, i) => (
             <motion.div key={i} variants={fadeUp}
               whileHover={{ y: -4 }}
-              className="p-6 rounded-2xl border border-white/6 bg-white/[0.025] hover:border-white/10 transition-all relative group overflow-hidden">
-              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-[#00D4C4]/5 to-transparent" />
+              className="p-6 rounded-2xl border border-white/[0.06] bg-white/[0.025] hover:border-white/10 transition-all relative group overflow-hidden">
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-[#00D4C4]/[0.05] to-transparent" />
               <div className="flex mb-4">
                 {Array(t.rating).fill(0).map((_, j) => (
                   <Star key={j} className="w-4 h-4 fill-[#00D4C4] text-[#00D4C4]" />
@@ -776,22 +835,22 @@ function TestimonialsSection() {
 function FAQSection() {
   const [open, setOpen] = useState<number | null>(0);
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-80px" });
+  const inView = useInViewSafe(ref, { once: true, margin: "-80px" });
 
   return (
     <section id="faq" ref={ref} className="py-28 px-6">
       <div className="max-w-3xl mx-auto">
         <motion.div className="text-center mb-16"
-          initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}}>
+          initial={motionInitial({ opacity: 0, y: 24 })} animate={inView ? { opacity: 1, y: 0 } : {}}>
           <span className="text-xs font-bold tracking-widest text-[#00D4C4] uppercase mb-4 block">FAQ</span>
           <h2 className="text-4xl font-black text-white">Common questions</h2>
         </motion.div>
         <div className="space-y-3">
           {FAQS.map((faq, i) => (
             <motion.div key={i}
-              initial={{ opacity: 0, y: 16 }} animate={inView ? { opacity: 1, y: 0 } : {}}
+              initial={motionInitial({ opacity: 0, y: 16 })} animate={inView ? { opacity: 1, y: 0 } : {}}
               transition={{ delay: i * 0.08 }}
-              className="rounded-2xl border border-white/6 bg-white/[0.02] overflow-hidden"
+              className="rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden"
             >
               <button
                 onClick={() => setOpen(open === i ? null : i)}
@@ -806,7 +865,7 @@ function FAQSection() {
                 {open === i && (
                   <motion.div
                     key="content"
-                    initial={{ height: 0, opacity: 0 }}
+                    initial={motionInitial({ height: 0, opacity: 0 })}
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
                     transition={{ duration: 0.25, ease: "easeInOut" }}
@@ -829,17 +888,17 @@ function FAQSection() {
 
 function CTABanner() {
   const ref = useRef(null);
-  const inView = useInView(ref, { once: true });
+  const inView = useInViewSafe(ref, { once: true });
 
   return (
     <section ref={ref} className="py-24 px-6">
       <motion.div
-        initial={{ opacity: 0, y: 30 }} animate={inView ? { opacity: 1, y: 0 } : {}}
+        initial={motionInitial({ opacity: 0, y: 30 })} animate={inView ? { opacity: 1, y: 0 } : {}}
         className="max-w-4xl mx-auto relative"
       >
-        <div className="relative rounded-3xl border border-[#00D4C4]/20 bg-gradient-to-br from-[#00D4C4]/8 via-[#0099CC]/5 to-transparent p-12 text-center overflow-hidden">
+        <div className="relative rounded-3xl border border-[#00D4C4]/20 bg-gradient-to-br from-[#00D4C4]/[0.08] via-[#0099CC]/[0.05] to-transparent p-12 text-center overflow-hidden">
           {/* Background glow */}
-          <div className="absolute inset-0 bg-gradient-to-br from-[#00D4C4]/5 to-[#6366F1]/3 rounded-3xl" />
+          <div className="absolute inset-0 bg-gradient-to-br from-[#00D4C4]/[0.05] to-[#6366F1]/[0.03] rounded-3xl" />
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-48 bg-[#00D4C4]/10 blur-3xl" />
 
           <div className="relative">
@@ -943,7 +1002,7 @@ export default function Landing() {
   }, [user]);
 
   return (
-    <div className="min-h-screen bg-[#060D1A] text-white" style={{ fontFamily: "'Inter', 'General Sans', system-ui, sans-serif" }}>
+    <div className="min-h-screen overflow-x-hidden bg-[#060D1A] text-white" style={{ fontFamily: "'Inter', 'General Sans', system-ui, sans-serif" }}>
       <Navbar />
       <HeroSection />
       <StatsBar />
