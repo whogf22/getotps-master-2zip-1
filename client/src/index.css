@@ -147,6 +147,30 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+
+  /* Decorative blurred glow layers on the landing hero are intentionally wider
+     than the viewport. Their containers clip them visually, but the document
+     still reports the extra width and stays horizontally scrollable on narrow
+     screens, which reads as a layout bug. Pin the scroll container instead. */
+  html,
+  body {
+    overflow-x: hidden;
+    max-width: 100%;
+  }
+
+  /* When the document timeline never advances (some in-app WebViews, heavily
+     throttled tabs, low-power mode), CSS transitions are created but stay at
+     their `from` value indefinitely — a `transition-all` element that changes
+     class ends up rendering the OLD state forever. The visible symptom was the
+     sticky navbar staying fully transparent after scroll, letting page content
+     run under the nav links. `main.tsx` marks these environments with
+     `data-no-motion`; drop transitions there so state changes apply instantly. */
+  html[data-no-motion] *,
+  html[data-no-motion] *::before,
+  html[data-no-motion] *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 @layer utilities {
