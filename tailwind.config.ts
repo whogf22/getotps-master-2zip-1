@@ -96,10 +96,33 @@ export default {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        // Dialog motion: keep the -50%/-50% centering transform in every
+        // frame so the panel scales from its own center instead of drifting
+        // toward a corner.
+        "dialog-overlay-in": {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        "dialog-overlay-out": {
+          from: { opacity: "1" },
+          to: { opacity: "0" },
+        },
+        "dialog-content-in": {
+          from: { opacity: "0", transform: "translate(-50%, -50%) scale(0.95)" },
+          to: { opacity: "1", transform: "translate(-50%, -50%) scale(1)" },
+        },
+        "dialog-content-out": {
+          from: { opacity: "1", transform: "translate(-50%, -50%) scale(1)" },
+          to: { opacity: "0", transform: "translate(-50%, -50%) scale(0.95)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "dialog-overlay-in": "dialog-overlay-in 250ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "dialog-overlay-out": "dialog-overlay-out 150ms cubic-bezier(0.22, 1, 0.36, 1) forwards",
+        "dialog-content-in": "dialog-content-in 250ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "dialog-content-out": "dialog-content-out 150ms cubic-bezier(0.22, 1, 0.36, 1) forwards",
       },
     },
   },
